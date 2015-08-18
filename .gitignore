@@ -34,3 +34,6 @@ tags
 
 # Certificates
 *.pem
+
+# Binaries
+/credentials
