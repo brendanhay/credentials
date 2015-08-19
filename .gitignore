@@ -36,4 +36,4 @@ tags
 *.pem
 
 # Binaries
-/credentials
+/bin

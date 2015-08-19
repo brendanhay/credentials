@@ -2,8 +2,9 @@ resolver:   nightly-2015-08-17
 flags:      {}
 extra-deps: []
 packages:
-  - '.'
-  - '../amazonka/amazonka'
-  - '../amazonka/core'
-  - '../amazonka/amazonka-dynamodb'
-  - '../amazonka/amazonka-s3'
+  - credentials
+  - credentials-cli
+  - ../amazonka/amazonka
+  - ../amazonka/core
+  - ../amazonka/amazonka-dynamodb
+  - ../amazonka/amazonka-s3

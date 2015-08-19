@@ -1,5 +1,8 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE OverloadedStrings    #-}
+
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 -- |
 -- Module      : Main
@@ -11,10 +14,11 @@
 --
 module Main (main) where
 
-import           Control.Lens               (view, (&), (.~))
+import           Control.Lens               (view, (&), (.~), (<&>))
 import           Control.Monad.Reader
 import           Control.Monad.Trans.AWS
 import           Data.ByteString            (ByteString)
+import           Data.ByteString.Builder    (Builder)
 import           Data.HashMap.Strict        (HashMap)
 import           Data.Maybe
 import qualified Data.Text                  as Text
@@ -28,9 +32,16 @@ import           Options.Applicative
 import           Options.Applicative.Arrows
 import           System.IO
 
+default (Builder)
+
 data Line
     = Append
     | Ignore
+      deriving (Show)
+
+data Force
+    = NoPrompt
+    | Prompt
       deriving (Show)
 
 data Format
@@ -47,27 +58,35 @@ instance FromText Format where
          <|> matchCI "shell" Shell
 
 data Mode
-    = Setup  !Store
-    | List   !Store !Format
-    | Get    !Store !Key !(Maybe Version) !Line
-    | GetAll !Store !Format
-    | Put    !Store !Key !Value
-    | Del    !Store !Key !Version
-    | DelAll !Store !Key
+    = Setup   !Store !Force
+    | Cleanup !Store !Force
+    | List    !Store !Format
+    | Get     !Store !Key !(Maybe Version) !Line
+    | GetAll  !Store !Format
+    | Put     !Store !Key !Value
+    | Del     !Store !Key !Version !Force
+    | DelAll  !Store !Key !Force
       deriving (Show)
 
 main :: IO ()
 main = do
-    (v, (r, m)) <- customExecParser settings options
-    l           <- newLogger v stdout
-    e           <- newEnv r Discover
-    runResourceT . runAWST (e & envLogger .~ l) $
-        case m of
-            Setup s -> do
-                say $ "Setting up " <> build (show s)
-                Cred.setup s
+    (v, r, m) <- customExecParser settings options
+    l         <- newLogger v stdout
+    e         <- newEnv r Discover <&> envLogger .~ l
 
-            _       -> say (show m)
+    runResourceT . runAWST e $
+        case m of
+            Setup s f -> do
+                say $ "Setting up " <> build s
+                x <- Cred.setup s
+                say x
+
+            Cleanup s f -> do
+                say $ "Initiating cleanup of " <> build s
+                Cred.cleanup s
+                say "Cleanup completed."
+
+            _         -> say $ show m
 
 say :: (MonadIO m, MonadReader r m, HasEnv r, ToLog a) => a -> m ()
 say x = do
@@ -77,13 +96,19 @@ say x = do
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 100)
 
-options :: ParserInfo (LogLevel, (Region, Mode))
-options = info (helper <*> ((,) <$> level <*> parse)) fullDesc
+options :: ParserInfo (LogLevel, Region, Mode)
+options = info (helper <*> (top <$> level <*> sub)) fullDesc
   where
-    parse = subparser $ mconcat
+    top v (r, m) = (v, r, m)
+
+    sub = subparser $ mconcat
         [ mode "setup"
-            (Setup <$> store)
+            (Setup <$> store <*> force)
             "setup"
+
+        , mode "cleanup"
+            (Cleanup <$> store <*> force)
+            "cleanup"
 
         , mode "list"
             (List <$> store <*> format)
@@ -102,11 +127,11 @@ options = info (helper <*> ((,) <$> level <*> parse)) fullDesc
             "put"
 
         , mode "delete"
-            (Del <$> store <*> key <*> version)
+            (Del <$> store <*> key <*> version <*> force)
             "delete"
 
         , mode "delete-all"
-            (DelAll <$> store <*> key)
+            (DelAll <$> store <*> key <*> force)
             "delete-all"
         ]
 
@@ -117,7 +142,7 @@ region :: Parser Region
 region = option text
      ( long "region"
     <> metavar "REGION"
-    <> help "Region to operate in. "
+    <> help "Region to operate in."
      )
 
 level :: Parser LogLevel
@@ -193,6 +218,12 @@ line = flag Append Ignore
      ( short 'n'
     <> long "no-line"
     <> help "Don't append a newline to the output. [default: off]"
+     )
+
+force :: Parser Force
+force = flag Prompt NoPrompt
+     ( long "force"
+    <> help "Always overwrite or remove, without prompting."
      )
 
 text :: FromText a => ReadM a
