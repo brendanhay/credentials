@@ -1,5 +1,6 @@
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
@@ -14,15 +15,22 @@
 --
 module Main (main) where
 
-import           Control.Lens               (view, (&), (.~), (<&>))
+import           Control.Exception.Lens
+import           Control.Lens               (view, ( # ), (&), (.~), (<&>))
+import           Control.Monad.Catch
 import           Control.Monad.Reader
-import           Control.Monad.Trans.AWS
+-- import           Control.Monad.Trans.AWS
 import           Data.ByteString            (ByteString)
 import           Data.ByteString.Builder    (Builder)
+import qualified Data.ByteString.Builder    as Build
+import           Data.Char
+import           Data.Conduit               (($$))
+import qualified Data.Conduit.List          as CL
 import           Data.HashMap.Strict        (HashMap)
 import           Data.Maybe
 import qualified Data.Text                  as Text
-import           Network.AWS                (Region)
+import           Network.AWS
+-- import           Network.AWS                (Region)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Network.AWS.S3             (BucketName, ObjectVersionId)
@@ -30,6 +38,7 @@ import           Network.Credentials        as Cred
 import           Numeric.Natural
 import           Options.Applicative
 import           Options.Applicative.Arrows
+import           System.Exit
 import           System.IO
 
 default (Builder)
@@ -43,6 +52,11 @@ data Force
     = NoPrompt
     | Prompt
       deriving (Show)
+
+data Agree
+    = Yes
+    | No
+    | What String
 
 data Format
     = JSON
@@ -58,14 +72,14 @@ instance FromText Format where
          <|> matchCI "shell" Shell
 
 data Mode
-    = Setup   !Store !Force
+    = Setup   !Store
     | Cleanup !Store !Force
     | List    !Store !Format
-    | Get     !Store !Key !(Maybe Version) !Line
+    | Put     !Store !Name !Value
+    | Get     !Store !Name !(Maybe Version) !Line
     | GetAll  !Store !Format
-    | Put     !Store !Key !Value
-    | Del     !Store !Key !Version !Force
-    | DelAll  !Store !Key !Force
+    | Del     !Store !Name !Version !Force
+    | DelAll  !Store !Name !Force
       deriving (Show)
 
 main :: IO ()
@@ -74,24 +88,25 @@ main = do
     l         <- newLogger v stdout
     e         <- newEnv r Discover <&> envLogger .~ l
 
-    runResourceT . runAWST e $
+    exit . runResourceT . runAWS e $ do
         case m of
-            Setup s f -> do
-                say $ "Setting up " <> build s
+            Setup s -> do
+                say $ "Creating table " <> build s <> " in " <> build r <> "."
                 x <- Cred.setup s
-                say x
+                say $ "Table " <> build s <> " " <> build x <> "."
 
             Cleanup s f -> do
-                say $ "Initiating cleanup of " <> build s
-                Cred.cleanup s
-                say "Cleanup completed."
+                say $ "This will delete table " <> build s <> " from " <> build r <> "!"
+                prompt f $ do
+                    Cred.cleanup s
+                    say $ "Table " <> build s <> " deleted."
 
-            _         -> say $ show m
-
-say :: (MonadIO m, MonadReader r m, HasEnv r, ToLog a) => a -> m ()
-say x = do
-    f <- view envLogger
-    liftIO (f Info (build x))
+            List s f -> do
+                say $ "Listing " <> build s <> " in " <> build r
+                xs <- Cred.list s
+                forM_ xs $ \(n, vs) ->
+                    say $ build n <> " -- versions " <> build (show vs)
+                say "Done."
 
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 100)
@@ -103,7 +118,7 @@ options = info (helper <*> (top <$> level <*> sub)) fullDesc
 
     sub = subparser $ mconcat
         [ mode "setup"
-            (Setup <$> store <*> force)
+            (Setup <$> store)
             "setup"
 
         , mode "cleanup"
@@ -115,7 +130,7 @@ options = info (helper <*> (top <$> level <*> sub)) fullDesc
             "list"
 
         , mode "get"
-            (Get <$> store <*> key <*> optional version <*> line)
+            (Get <$> store <*> name <*> optional version <*> line)
             "get"
 
         , mode "get-all"
@@ -123,15 +138,15 @@ options = info (helper <*> (top <$> level <*> sub)) fullDesc
             "get-all"
 
         , mode "put"
-            (Put <$> store <*> key <*> val)
+            (Put <$> store <*> name <*> val)
             "put"
 
         , mode "delete"
-            (Del <$> store <*> key <*> version <*> force)
+            (Del <$> store <*> name <*> version <*> force)
             "delete"
 
         , mode "delete-all"
-            (DelAll <$> store <*> key <*> force)
+            (DelAll <$> store <*> name <*> force)
             "delete-all"
         ]
 
@@ -165,11 +180,11 @@ version = option text
     <> help "Version number."
      )
 
-key :: Parser Key
-key = option text
-     ( long "key"
-    <> metavar "KEY"
-    <> help "Key."
+name :: Parser Name
+name = option text
+     ( long "name"
+    <> metavar " NAME"
+    <> help "Name."
      )
 
 val :: Parser Value
@@ -222,9 +237,50 @@ line = flag Append Ignore
 
 force :: Parser Force
 force = flag Prompt NoPrompt
-     ( long "force"
+     ( short 'f'
+    <> long "force"
     <> help "Always overwrite or remove, without prompting."
      )
 
 text :: FromText a => ReadM a
 text = eitherReader (fromText . Text.pack)
+
+exit :: IO () -> IO ()
+exit io = do
+    void $ catches io
+        [ handler _NotSetup $ \s ->
+            quit 2 ("Credential store " <> build s <> " doesn't exist.")
+
+        -- , hd 3 _Invalid
+        -- , hd 4 _Missing
+        ]
+    exitSuccess
+  where
+     quit n m = err m >> exitWith (ExitFailure n)
+
+say :: (MonadIO m, ToLog a) => a -> m ()
+say x = liftIO $ Build.hPutBuilder stdout (build x <> "\n") >> hFlush stdout
+
+err :: (MonadIO m, ToLog a) => a -> m ()
+err x = liftIO $ Build.hPutBuilder stderr ("Error! " <> build x <> "\n")
+
+prompt :: MonadIO m => Force -> m () -> m ()
+prompt NoPrompt io = say "Running ..." >> io
+prompt Prompt   io = do
+    liftIO $ hPutStr stdout " -> Proceed? [y/n]: " >> hFlush stdout
+    a <- agree
+    case a of
+        Yes    -> say "Running ..." >> io
+        No     -> say "Cancelling ..."
+        What w -> say $ build w <> ", what? Cancelling ..."
+
+agree :: MonadIO m => m Agree
+agree = do
+    r <- map toLower . filter (not . isSpace) <$> liftIO getLine
+    return $! case r of
+        "yes" -> Yes
+        "y"   -> Yes
+        "no"  -> No
+        "n"   -> No
+        ""    -> No
+        x     -> What x

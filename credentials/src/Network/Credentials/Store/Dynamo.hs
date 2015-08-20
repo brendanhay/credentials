@@ -1,5 +1,6 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE OverloadedStrings  #-}
 
 -- |
 -- Module      : Network.Credentials.Store.Dynamo
@@ -11,18 +12,28 @@
 --
 module Network.Credentials.Store.Dynamo where
 
-import           Conduit                   hiding (await)
+import           Conduit                   hiding (await, scan)
+import           Control.Applicative
 import           Control.Exception.Lens
 import           Control.Lens              hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.Free.Class
-import           Control.Monad.Trans.AWS
+import           Control.Monad.Reader      (ask)
+import           Data.Bifunctor
 import           Data.ByteString           (ByteString)
+import qualified Data.Conduit.List         as CL
 import           Data.HashMap.Strict       (HashMap)
+import qualified Data.HashMap.Strict       as Map
+import           Data.List                 (sort)
 import           Data.List.NonEmpty        (NonEmpty (..))
 import           Data.Maybe
+import           Data.Monoid
 import qualified Data.Text                 as Text
+import           Data.Typeable
+import           Network.AWS
+import           Network.AWS               (runAWS)
+import           Network.AWS               (AWS, liftAWS)
 import           Network.AWS               (Region)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
@@ -39,11 +50,9 @@ fieldKey      = "key"
 fieldContents = "contents"
 fieldHMAC     = "hmac"
 
-setup :: (MonadCatch m, MonadFree Command m)
-      => Text
-      -> m Setup
+setup :: MonadAWS m => Text -> m Setup
 setup n = do
-    p <- tableDefined n
+    p <- exists n
     unless p $ do
         let keys = keySchemaElement fieldName    Hash
                :| [keySchemaElement fieldVersion Range]
@@ -59,16 +68,47 @@ setup n = do
             then Exists
             else Created
 
-cleanup :: MonadFree Command m => Text -> m ()
+cleanup :: MonadAWS m => Text -> m ()
 cleanup n = do
-    p <- tableDefined n
+    p <- exists n
     when p $ do
         void $ send (deleteTable n)
         void $ await tableNotExists (describeTable n)
 
-tableDefined :: MonadFree Command m => Text -> m Bool
-tableDefined n =
-        paginate listTables
+exists :: MonadAWS m => Text -> m Bool
+exists n = paginate listTables
     =$= concatMapC (view ltrsTableNames)
      $$ (isJust <$> findC (== n))
 
+list :: (MonadCatch m, MonadAWS m) => Text -> m [(Name, NonEmpty Version)]
+list n = catching_ _ResourceNotFoundException go $ throwM (NotSetup (Table n))
+  where
+    go = paginate req
+        =$= CL.concatMapM (traverse attrs . view srsItems)
+        =$= CL.groupOn1 fst
+        =$= CL.map group
+         $$ CL.consume
+
+    req = scan n & sAttributesToGet ?~ fieldName :| [fieldVersion]
+
+    group ((k, v), xs) = (k, v :| map snd (sort xs))
+
+    attrs m = (,)
+        <$> value fieldName    avS m
+        <*> value fieldVersion avN m
+
+    value k l m = require k m >>= parse k l
+
+    parse k l a = maybe (missing k) (either (invalid k) pure . fromText) (a ^. l)
+    require k m = maybe (missing k) pure (Map.lookup k m)
+
+    missing k   = throwM (Missing k)
+    invalid k e = throwM (Invalid k e)
+
+-- # print list of credential names and versions,
+-- # sorted by name and then by version
+-- max_len = max([len(x["name"]) for x in credential_list])
+-- for cred in sorted(credential_list,
+--                    key=operator.itemgetter("name", "version")):
+--     print("{0:{1}} -- version {2:>}".format(
+--         cred["name"], max_len, cred["version"]))

@@ -17,6 +17,7 @@ module Network.Credentials
     -- * Generalised Interface
       setup
     , cleanup
+    , list
 
     -- * Re-exported Types
     , module Network.Credentials.Types
@@ -28,12 +29,14 @@ import           Control.Lens                     hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.Free.Class
-import           Control.Monad.Trans.AWS
 import           Data.ByteString                  (ByteString)
+import           Data.Either
 import           Data.HashMap.Strict              (HashMap)
 import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Maybe
 import qualified Data.Text                        as Text
+import           Network.AWS
+import           Network.AWS
 import           Network.AWS                      (Region)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
@@ -53,18 +56,24 @@ import           Numeric.Natural
 --
 -- put_item(data=data)
 
--- Exceptions, Logging, etc?
+-- Exceptions, Logging, etc?C
 
-setup :: (MonadCatch m, MonadFree Command m) => Store -> m Setup
+setup :: MonadAWS m => Store -> m Setup
 setup = \case
 --    Bucket b p -> S3.setup b p
     Table  t   -> DB.setup t
     m -> error (show m)
 
-cleanup :: MonadFree Command m => Store -> m ()
+cleanup :: MonadAWS m => Store -> m ()
 cleanup = \case
 --    Bucket b p -> S3.cleanup b p
     Table  t   -> DB.cleanup t
+    m -> error (show m)
+
+list :: (MonadCatch m, MonadAWS m) => Store -> m [(Name, NonEmpty Version)]
+list = \case
+    Table t -> DB.list t
+
     m -> error (show m)
 
     -- create kms

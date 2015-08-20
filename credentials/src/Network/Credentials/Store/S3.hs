@@ -31,7 +31,7 @@ import           Network.AWS.S3            (BucketName, ObjectVersionId)
 import           Network.Credentials.Types
 import           Numeric.Natural
 
-setup :: (MonadCatch m, MonadFree Command m)
+setup :: (MonadCatch m, AWSConstraint r m)
       => BucketName
       -> Maybe Text
       -> m Setup
