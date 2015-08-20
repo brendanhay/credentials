@@ -19,6 +19,7 @@ import           Control.Exception.Lens
 import           Control.Lens               (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.Reader
+import           Data.Data
 -- import           Control.Monad.Trans.AWS
 import           Data.ByteString            (ByteString)
 import           Data.ByteString.Builder    (Builder)
@@ -106,48 +107,58 @@ main = do
                 xs <- Cred.list s
                 forM_ xs $ \(n, vs) ->
                     say $ build n <> " -- versions " <> build (show vs)
-                say "Done."
 
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 100)
 
 options :: ParserInfo (LogLevel, Region, Mode)
-options = info (helper <*> (top <$> level <*> sub)) fullDesc
+options = info (helper <*> (top <$> level <*> sub)) desc
   where
+    desc = mconcat
+        [ fullDesc
+        , progDesc "Administration CLI for credential and secret storage."
+        , footer $
+            "    If --table or --bucket isn't specified, "
+                ++ show defaultStore ++ " will be used."
+        ]
+
     top v (r, m) = (v, r, m)
 
     sub = subparser $ mconcat
         [ mode "setup"
             (Setup <$> store)
-            "setup"
+            "Setup the credential store."
 
         , mode "cleanup"
             (Cleanup <$> store <*> force)
-            "cleanup"
+            "Remove the credential store."
 
         , mode "list"
             (List <$> store <*> format)
-            "list"
+            "List credential names and the respective versions\
+            \ in the specified store."
 
         , mode "get"
             (Get <$> store <*> name <*> optional version <*> line)
-            "get"
+            "Fetch and decrypt a specific version of the credential from the store. \
+            \Defaults to latest version."
 
         , mode "get-all"
             (GetAll <$> store <*> format)
-            "get-all"
+            "Fetch and decrypt all secrets in the credential store. \
+            \Defaults to the latest version per credential."
 
         , mode "put"
             (Put <$> store <*> name <*> val)
-            "put"
+            "Write and encrypt a new version of the credential to the store."
 
         , mode "delete"
             (Del <$> store <*> name <*> version <*> force)
-            "delete"
+            "Remove a specific version of the credential from the store."
 
         , mode "delete-all"
             (DelAll <$> store <*> name <*> force)
-            "delete-all"
+            "Remove all versions of the credential from the store."
         ]
 
 mode :: String -> Parser a -> String -> Mod CommandFields (Region, a)
@@ -157,14 +168,15 @@ region :: Parser Region
 region = option text
      ( long "region"
     <> metavar "REGION"
-    <> help "Region to operate in."
+    <> help "The AWS Region in which to operate."
+    <> completeWith possibleRegions
      )
 
 level :: Parser LogLevel
 level = option (eitherReader r)
      ( long "level"
     <> metavar "LEVEL"
-    <> help "Log level to emit. One of debug|info|error. [default: info]"
+    <> help "Log message level to emit. One of debug|info|error. [default: info]"
     <> value Info
      )
   where
@@ -173,25 +185,25 @@ level = option (eitherReader r)
     r "error" = Right Error
     r e       = Left $ "Unrecognised log level: " ++ e
 
-version :: Parser Version
-version = option text
-     ( long "version"
-    <> metavar "VERSION"
-    <> help "Version number."
-     )
-
 name :: Parser Name
 name = option text
      ( long "name"
-    <> metavar " NAME"
-    <> help "Name."
+    <> metavar "STRING"
+    <> help "The unique name of the credential."
      )
 
 val :: Parser Value
 val = option text
      ( long "value"
-    <> metavar "VALUE"
-    <> help "Value."
+    <> metavar "STRING"
+    <> help "The raw unencrypted value of the credential."
+     )
+
+version :: Parser Version
+version = option text
+     ( long "version"
+    <> metavar "NUMBER"
+    <> help "A specific credential version."
      )
 
 store :: Parser Store
@@ -200,21 +212,21 @@ store = bucket <|> table <|> pure defaultStore
     bucket = Bucket
         <$> option text
              ( long "bucket"
-            <> metavar "BUCKET"
-            <> help "Bucket name."
+            <> metavar "STRING"
+            <> help "S3 bucket name to use for credential storage."
              )
 
         <*> (optional $ option text
              ( long "prefix"
-            <> metavar "PREFIX"
-            <> help "Object prefix."
+            <> metavar "STRING"
+            <> help "S3 object prefix to namespace credential storage."
              ))
 
     table = Table
         <$> option text
              ( long "table"
-            <> metavar "TABLE"
-            <> help "Table name."
+            <> metavar "STRING"
+            <> help "DynamoDB table name to use for credential storage."
              )
 
 context :: Parser Context
@@ -239,7 +251,7 @@ force :: Parser Force
 force = flag Prompt NoPrompt
      ( short 'f'
     <> long "force"
-    <> help "Always overwrite or remove, without prompting."
+    <> help "Always overwrite or remove, without an interactive prompt."
      )
 
 text :: FromText a => ReadM a
@@ -249,7 +261,7 @@ exit :: IO () -> IO ()
 exit io = do
     void $ catches io
         [ handler _NotSetup $ \s ->
-            quit 2 ("Credential store " <> build s <> " doesn't exist.")
+            quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
 
         -- , hd 3 _Invalid
         -- , hd 4 _Missing
@@ -284,3 +296,11 @@ agree = do
         "n"   -> No
         ""    -> No
         x     -> What x
+
+possibleRegions :: [String]
+possibleRegions = map (str . fromConstr)
+    . dataTypeConstrs
+    $ dataTypeOf Frankfurt
+  where
+    str :: Region -> String
+    str = Text.unpack . toText
