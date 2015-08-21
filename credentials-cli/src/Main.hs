@@ -1,7 +1,12 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE ExtendedDefaultRules       #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -16,29 +21,32 @@
 module Main (main) where
 
 import           Control.Exception.Lens
-import           Control.Lens               (view, ( # ), (&), (.~), (<&>))
+import           Control.Lens                         (view, ( # ), (&), (.~),
+                                                       (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.Reader
-import           Data.Data
--- import           Control.Monad.Trans.AWS
-import           Data.ByteString            (ByteString)
-import           Data.ByteString.Builder    (Builder)
-import qualified Data.ByteString.Builder    as Build
+import           Data.ByteString                      (ByteString)
+import           Data.ByteString.Builder              (Builder)
+import qualified Data.ByteString.Builder              as Build
+import qualified Data.ByteString.Char8                as BS8
 import           Data.Char
-import           Data.Conduit               (($$))
-import qualified Data.Conduit.List          as CL
-import           Data.HashMap.Strict        (HashMap)
+import           Data.Conduit                         (($$))
+import qualified Data.Conduit.List                    as CL
+import           Data.Data
+import           Data.HashMap.Strict                  (HashMap)
+import           Data.List.NonEmpty                   (NonEmpty (..))
+import qualified Data.List.NonEmpty                   as NE
 import           Data.Maybe
-import qualified Data.Text                  as Text
+import qualified Data.Text                            as Text
 import           Network.AWS
--- import           Network.AWS                (Region)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.S3             (BucketName, ObjectVersionId)
-import           Network.Credentials        as Cred
+import           Network.AWS.S3                       (BucketName,
+                                                       ObjectVersionId)
+import           Network.Credentials                  as Cred
 import           Numeric.Natural
 import           Options.Applicative
-import           Options.Applicative.Arrows
+import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
 
@@ -64,7 +72,14 @@ data Format
     | YAML
     | CSV
     | Shell
-      deriving (Show)
+      deriving (Data, Show)
+
+instance ToText Format where
+    toText = \case
+        JSON  -> "json"
+        YAML  -> "yaml"
+        CSV   -> "csv"
+        Shell -> "shell"
 
 instance FromText Format where
     parser = matchCI "json"  JSON
@@ -72,15 +87,48 @@ instance FromText Format where
          <|> matchCI "csv"   CSV
          <|> matchCI "shell" Shell
 
+newtype App a = App { runApp :: AWS a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
+
+wrap :: (Storage s, Engine s ~ Engine App) => s a -> App a
+wrap = App . engine
+
+instance MonadAWS App where
+    liftAWS = App
+
+instance Storage App where
+    type Engine App = AWS
+
+    data Ref App
+        = Tbl (Ref Dynamo)
+        | Bkt Bucket
+
+    engine = runApp
+
+    setup = \case
+        Tbl t -> wrap (setup t)
+
+    list = \case
+        Tbl t -> wrap (list t)
+
+type Store = Ref App
+
+instance ToLog Store where
+    build = \case
+        Tbl t            -> "dynamo://" <> build t
+        Bkt (Bucket b p) -> "s3://"     <> build b <> "/" <> maybe mempty build p
+
+instance Show Store where
+    show = BS8.unpack . toBS . build
+
 data Mode
     = Setup   !Store
     | Cleanup !Store !Force
     | List    !Store !Format
-    | Put     !Store !Name !Value
-    | Get     !Store !Name !(Maybe Version) !Line
-    | GetAll  !Store !Format
-    | Del     !Store !Name !Version !Force
-    | DelAll  !Store !Name !Force
+    | Put     !Store !KeyId !Context !Name !Value
+    | Get     !Store        !Context !Name !(Maybe Version) !Line
+    | Del     !Store !Name  !Version !Force
+    | DelAll  !Store !Name  !Force
       deriving (Show)
 
 main :: IO ()
@@ -89,24 +137,39 @@ main = do
     l         <- newLogger v stdout
     e         <- newEnv r Discover <&> envLogger .~ l
 
-    exit . runResourceT . runAWS e $ do
+    exit . runResourceT . runAWS e . runApp $ do
         case m of
-            Setup s -> do
-                say $ "Creating table " <> build s <> " in " <> build r <> "."
-                x <- Cred.setup s
-                say $ "Table " <> build s <> " " <> build x <> "."
+            -- Setup s -> do
+            --     say $ "Creating table " <> build s <> " in " <> build r <> "."
+            --     x <- Cred.setup s
+            --     say $ "Table " <> build s <> " " <> build x <> "."
 
-            Cleanup s f -> do
-                say $ "This will delete table " <> build s <> " from " <> build r <> "!"
-                prompt f $ do
-                    Cred.cleanup s
-                    say $ "Table " <> build s <> " deleted."
+            -- Cleanup s f -> do
+            --     say $ "This will delete table " <> build s <> " from " <> build r <> "!"
+            --     prompt f $ do
+            --         Cred.cleanup s
+            --         say $ "Table " <> build s <> " deleted."
 
             List s f -> do
-                say $ "Listing " <> build s <> " in " <> build r
-                xs <- Cred.list s
-                forM_ xs $ \(n, vs) ->
-                    say $ build n <> " -- versions " <> build (show vs)
+                say $ "Listing " <> build s <> " in " <> build r <> ":"
+
+                xs <- list s
+
+                forM_ xs $ \(n, v :| vs) -> do
+                    say $ "  "   <> build n <> ":"
+                    say $ "    " <> build v <> " [latest] "
+                    mapM_ (say . mappend "    " . build) vs
+                say "Done."
+
+            -- Put s k c n x -> do
+            --     say $ "Writing secret to " <> build n <> "."
+            --     v <- Cred.put k c n x s
+            --     say $ "Wrote " <> build n <> " as " <> build v <> "."
+
+            -- Get s c n v -> do
+            --     say $ "Retrieving " <> build n <> " secret."
+            --     v <- Cred.get c n v s
+            --     say $ "Wrote " <> build n <> " as " <> build v <> "."
 
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 100)
@@ -114,13 +177,8 @@ settings = prefs (showHelpOnError <> columns 100)
 options :: ParserInfo (LogLevel, Region, Mode)
 options = info (helper <*> (top <$> level <*> sub)) desc
   where
-    desc = mconcat
-        [ fullDesc
-        , progDesc "Administration CLI for credential and secret storage."
-        , footer $
-            "    If --table or --bucket isn't specified, "
-                ++ show defaultStore ++ " will be used."
-        ]
+    desc = fullDesc
+        <> progDesc "Administration CLI for credential and secret storage."
 
     top v (r, m) = (v, r, m)
 
@@ -139,17 +197,12 @@ options = info (helper <*> (top <$> level <*> sub)) desc
             \ in the specified store."
 
         , mode "get"
-            (Get <$> store <*> name <*> optional version <*> line)
+            (Get <$> store <*> context <*> name <*> optional version <*> line)
             "Fetch and decrypt a specific version of the credential from the store. \
             \Defaults to latest version."
 
-        , mode "get-all"
-            (GetAll <$> store <*> format)
-            "Fetch and decrypt all secrets in the credential store. \
-            \Defaults to the latest version per credential."
-
         , mode "put"
-            (Put <$> store <*> name <*> val)
+            (Put <$> store <*> key <*> context <*> name <*> secret)
             "Write and encrypt a new version of the credential to the store."
 
         , mode "delete"
@@ -169,7 +222,7 @@ region = option text
      ( long "region"
     <> metavar "REGION"
     <> help "The AWS Region in which to operate."
-    <> completeWith possibleRegions
+    <> complete
      )
 
 level :: Parser LogLevel
@@ -178,38 +231,19 @@ level = option (eitherReader r)
     <> metavar "LEVEL"
     <> help "Log message level to emit. One of debug|info|error. [default: info]"
     <> value Info
+    <> completeWith ["info", "error", "debug", "trace"]
      )
   where
     r "debug" = Right Debug
+    r "trace" = Right Trace
     r "info"  = Right Info
     r "error" = Right Error
     r e       = Left $ "Unrecognised log level: " ++ e
 
-name :: Parser Name
-name = option text
-     ( long "name"
-    <> metavar "STRING"
-    <> help "The unique name of the credential."
-     )
-
-val :: Parser Value
-val = option text
-     ( long "value"
-    <> metavar "STRING"
-    <> help "The raw unencrypted value of the credential."
-     )
-
-version :: Parser Version
-version = option text
-     ( long "version"
-    <> metavar "NUMBER"
-    <> help "A specific credential version."
-     )
-
 store :: Parser Store
-store = bucket <|> table <|> pure defaultStore
+store = bucket <|> table <|> pure (Tbl defaultTable)
   where
-    bucket = Bucket
+    bucket = fmap Bkt $ Bucket
         <$> option text
              ( long "bucket"
             <> metavar "STRING"
@@ -222,15 +256,49 @@ store = bucket <|> table <|> pure defaultStore
             <> help "S3 object prefix to namespace credential storage."
              ))
 
-    table = Table
+    table = Tbl
         <$> option text
              ( long "table"
             <> metavar "STRING"
-            <> help "DynamoDB table name to use for credential storage."
+            <> help
+                ("DynamoDB table name to use for credential storage. \
+                \[default: " ++ show defaultTable ++ "]")
              )
+
+key :: Parser KeyId
+key = option text
+    ( long "key"
+   <> metavar "STRING"
+   <> help
+       ("The KMS master key id to use. \
+       \[default: " ++ show defaultKeyId ++ "]")
+   <> value defaultKeyId
+    )
 
 context :: Parser Context
 context = pure (Context mempty)
+
+name :: Parser Name
+name = option text
+     ( long "name"
+    <> metavar "STRING"
+    <> help "The unique name of the credential."
+     )
+
+secret :: Parser Value
+secret = option text
+     ( long "secret"
+    <> metavar "STRING"
+    <> help "The raw unencrypted value of the credential."
+     )
+
+version :: Parser Version
+version = option text
+     ( long "version"
+    <> metavar "NUMBER"
+    <> help "A specific credential version."
+    <> completeWith ["1", "2"]
+     )
 
 format :: Parser Format
 format = option text
@@ -238,6 +306,7 @@ format = option text
     <> metavar "FORMAT"
     <> help "Output format. One of json|yaml|csv|shell. [default: shell]"
     <> value Shell
+    <> complete
      )
 
 line :: Parser Line
@@ -297,10 +366,12 @@ agree = do
         ""    -> No
         x     -> What x
 
-possibleRegions :: [String]
-possibleRegions = map (str . fromConstr)
-    . dataTypeConstrs
-    $ dataTypeOf Frankfurt
+complete :: forall a f. (Data a, ToText a, HasCompleter f) => Mod f a
+complete = completeWith $
+    map (str . fromConstr) . dataTypeConstrs $ dataTypeOf val
   where
-    str :: Region -> String
+    val :: a
+    val = undefined
+
+    str :: a -> String
     str = Text.unpack . toText

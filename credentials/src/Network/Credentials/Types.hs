@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 -- |
 -- Module      : Network.Credentials.Types
@@ -14,27 +15,30 @@
 --
 module Network.Credentials.Types where
 
-import           Conduit                  hiding (await)
+import           Conduit                 hiding (await)
 import           Control.Exception.Lens
-import           Control.Lens             hiding (Context)
+import           Control.Lens            hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
-import           Control.Monad.Free.Class
 import           Control.Monad.Trans.AWS
-import           Data.ByteString          (ByteString)
-import qualified Data.ByteString.Char8    as BS8
-import           Data.HashMap.Strict      (HashMap)
-import           Data.List.NonEmpty       (NonEmpty (..))
+import           Crypto.Hash             (SHA256)
+import           Crypto.MAC.HMAC         (HMAC)
+import           Data.ByteArray.Encoding
+import           Data.ByteString         (ByteString)
+import qualified Data.ByteString.Char8   as BS8
+import           Data.HashMap.Strict     (HashMap)
+import           Data.List.NonEmpty      (NonEmpty (..))
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.Text                as Text
+import           Data.String
+import qualified Data.Text               as Text
 import           Data.Typeable
-import           Network.AWS              (Region)
+import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Network.AWS.DynamoDB
 import           Network.AWS.S3
-import           Network.AWS.S3           (BucketName, ObjectVersionId)
+import           Network.AWS.S3          (BucketName, ObjectVersionId)
 import           Numeric.Natural
 
 data Setup
@@ -47,45 +51,56 @@ instance ToLog Setup where
     build Exists  = "exists"
 
 newtype Name = Name Text
-    deriving (Eq, Ord, Show, FromText, ToLog)
+    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
-data Value
-    = Crypt !ByteString
-    | Raw   !Text
+newtype Value = Value Text
+    deriving (FromText)
 
 instance Show Value where
     show = const "Value *****"
 
-instance FromText Value where
-    parser = Raw <$> Network.AWS.Data.parser
+newtype KeyId = KeyId Text
+    deriving (Eq, ToText, FromText)
+
+instance Show KeyId where
+    show = Text.unpack . toText
+
+defaultKeyId :: KeyId
+defaultKeyId = KeyId "alias/credential-store"
+
+newtype Key = Key ByteString
+    deriving (ToByteString)
+
+newtype Ciphertext = Ciphertext ByteString
+    deriving (ToByteString)
+
+newtype HMAC' = HMAC' (HMAC SHA256)
+
+instance ToText HMAC' where
+    toText (HMAC' h) = toText (convertToBase Base16 h :: ByteString)
+
+data Secret = Secret Key Ciphertext HMAC'
+
+instance Show Secret where
+    show = const "Secret *****"
 
 newtype Context = Context (HashMap Text Text)
-    deriving (Show)
+    deriving (Show, Monoid)
 
 newtype Version = Version Natural
-    deriving (Eq, Ord, Show, FromText)
+    deriving (Eq, Ord, Num, Show, FromText, ToText)
 
 instance ToLog Version where
     build (Version n) = build (toInteger n)
 
-data Store
-    = Bucket BucketName (Maybe Text)
-    | Table  Text
-      deriving (Eq)
+-- newtype Table = Table Text
+--     deriving (Eq, Ord, Show, IsString, FromText, ToText, ToLog)
 
-instance ToLog Store where
-    build = \case
-        Bucket b p -> "s3://"     <> build b <> "/" <> maybe mempty build p
-        Table  t   -> "dynamo://" <> build t
-
-instance Show Store where
-    show = BS8.unpack . toBS . build
-
-defaultStore :: Store
-defaultStore = Table "credential-store"
+data Bucket = Bucket BucketName (Maybe Text)
+    deriving (Eq)
 
 data SetupError
-    = NotSetup Store
+    = NotSetup Text
       deriving (Eq, Typeable)
 
 makeClassyPrisms ''SetupError
@@ -99,16 +114,18 @@ instance AsSetupError SomeException where
     _SetupError = exception
 
 data ItemError
-    = Invalid Text String
-    | Missing Text
+    = NotFound Name
+    | Invalid  Text String
+    | Missing  Text
       deriving (Eq, Typeable)
 
 makeClassyPrisms ''ItemError
 
 instance Show ItemError where
     show = \case
-        Invalid k e -> "Invalid key " ++ Text.unpack k ++ ": " ++ e ++ "."
-        Missing k   -> "Missing key " ++ Text.unpack k ++ "."
+        NotFound n   -> "Not found: "   ++ Text.unpack (toText n) ++ "."
+        Invalid  k e -> "Invalid key: " ++ Text.unpack k ++ ", " ++ e ++ "."
+        Missing  k   -> "Missing key: " ++ Text.unpack k ++ "."
 
 instance Exception ItemError
 

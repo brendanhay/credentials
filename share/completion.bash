@@ -7,7 +7,7 @@ _credentials()
         CMDLINE=(${CMDLINE[@]} --bash-completion-word $arg)
     done
 
-    COMPREPLY=( $(put "${CMDLINE[@]}") )
+    COMPREPLY=( $(credentials "${CMDLINE[@]}") )
 }
 
 complete -o filenames -F _credentials credentials

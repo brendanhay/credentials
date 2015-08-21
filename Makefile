@@ -1,11 +1,7 @@
-SHELL   := /usr/bin/env bash
-OUT_DIR ?= bin
+SHELL := /usr/bin/env bash
 
-build: $(OUT_DIR)
-	stack build --copy-bins --local-bin-path=$(OUT_DIR)
+build:
+	stack build --copy-bins
 
 clean:
 	stack clean
-
-$(OUT_DIR):
-	mkdir -p $@
