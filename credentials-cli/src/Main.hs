@@ -25,6 +25,8 @@ import           Control.Lens                         (view, ( # ), (&), (.~),
                                                        (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.Reader
+import           Credentials.IO
+import           Credentials.Types
 import           Data.ByteString                      (ByteString)
 import           Data.ByteString.Builder              (Builder)
 import qualified Data.ByteString.Builder              as Build
@@ -52,74 +54,55 @@ import           System.IO
 
 default (Builder)
 
-data Line
-    = Append
-    | Ignore
-      deriving (Show)
+main :: IO ()
+main = do
+    (v, (r, m)) <-
+        customExecParser (prefs (showHelpOnError <> columns 100)) options
 
-data Force
-    = NoPrompt
-    | Prompt
-      deriving (Show)
+    l <- newLogger v stdout
+    e <- newEnv r Discover <&> envLogger .~ l
 
-data Agree
-    = Yes
-    | No
-    | What String
+    catches (runResourceT . runAWS e . runApp $ program r m)
+        [ handler _NotSetup $ \s ->
+            quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
 
-data Format
-    = JSON
-    | YAML
-    | CSV
-    | Shell
-      deriving (Data, Show)
+        -- , hd 3 _Invalid
+        -- , hd 4 _Missing
+        ]
 
-instance ToText Format where
-    toText = \case
-        JSON  -> "json"
-        YAML  -> "yaml"
-        CSV   -> "csv"
-        Shell -> "shell"
+program :: Region -> Mode -> App ()
+program r = \case
+    Setup s -> do
+        say $ "Creating table " <> build s <> " in " <> build r <> "."
+        x <- Cred.setup s
+        say $ "Table " <> build s <> " " <> build x <> "."
 
-instance FromText Format where
-    parser = matchCI "json"  JSON
-         <|> matchCI "yaml"  YAML
-         <|> matchCI "csv"   CSV
-         <|> matchCI "shell" Shell
+    -- Cleanup s f -> do
+    --     say $ "This will delete table " <> build s <> " from " <> build r <> "!"
+    --     prompt f $ do
+    --         Cred.cleanup s
+    --         say $ "Table " <> build s <> " deleted."
 
-newtype App a = App { runApp :: AWS a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
+    List s f -> do
+        say $ "Listing " <> build s <> " in " <> build r <> ":"
 
-wrap :: (Storage s, Engine s ~ Engine App) => s a -> App a
-wrap = App . engine
+        xs <- list s
 
-instance MonadAWS App where
-    liftAWS = App
+        forM_ xs $ \(n, v :| vs) -> do
+            say $ "  "   <> build n <> ":"
+            say $ "    " <> build v <> " [latest] "
+            mapM_ (say . mappend "    " . build) vs
+        say "Done."
 
-instance Storage App where
-    type Engine App = AWS
+    -- Put s k c n x -> do
+    --     say $ "Writing secret to " <> build n <> "."
+    --     v <- Cred.put k c n x s
+    --     say $ "Wrote " <> build n <> " as " <> build v <> "."
 
-    data Ref App
-        = Tbl (Ref Dynamo)
-        | Bkt Bucket
-
-    engine = runApp
-
-    setup = \case
-        Tbl t -> wrap (setup t)
-
-    list = \case
-        Tbl t -> wrap (list t)
-
-type Store = Ref App
-
-instance ToLog Store where
-    build = \case
-        Tbl t            -> "dynamo://" <> build t
-        Bkt (Bucket b p) -> "s3://"     <> build b <> "/" <> maybe mempty build p
-
-instance Show Store where
-    show = BS8.unpack . toBS . build
+    -- Get s c n v -> do
+    --     say $ "Retrieving " <> build n <> " secret."
+    --     v <- Cred.get c n v s
+    --     say $ "Wrote " <> build n <> " as " <> build v <> "."
 
 data Mode
     = Setup   !Store
@@ -131,56 +114,11 @@ data Mode
     | DelAll  !Store !Name  !Force
       deriving (Show)
 
-main :: IO ()
-main = do
-    (v, r, m) <- customExecParser settings options
-    l         <- newLogger v stdout
-    e         <- newEnv r Discover <&> envLogger .~ l
-
-    exit . runResourceT . runAWS e . runApp $ do
-        case m of
-            -- Setup s -> do
-            --     say $ "Creating table " <> build s <> " in " <> build r <> "."
-            --     x <- Cred.setup s
-            --     say $ "Table " <> build s <> " " <> build x <> "."
-
-            -- Cleanup s f -> do
-            --     say $ "This will delete table " <> build s <> " from " <> build r <> "!"
-            --     prompt f $ do
-            --         Cred.cleanup s
-            --         say $ "Table " <> build s <> " deleted."
-
-            List s f -> do
-                say $ "Listing " <> build s <> " in " <> build r <> ":"
-
-                xs <- list s
-
-                forM_ xs $ \(n, v :| vs) -> do
-                    say $ "  "   <> build n <> ":"
-                    say $ "    " <> build v <> " [latest] "
-                    mapM_ (say . mappend "    " . build) vs
-                say "Done."
-
-            -- Put s k c n x -> do
-            --     say $ "Writing secret to " <> build n <> "."
-            --     v <- Cred.put k c n x s
-            --     say $ "Wrote " <> build n <> " as " <> build v <> "."
-
-            -- Get s c n v -> do
-            --     say $ "Retrieving " <> build n <> " secret."
-            --     v <- Cred.get c n v s
-            --     say $ "Wrote " <> build n <> " as " <> build v <> "."
-
-settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns 100)
-
-options :: ParserInfo (LogLevel, Region, Mode)
-options = info (helper <*> (top <$> level <*> sub)) desc
+options :: ParserInfo (LogLevel, (Region, Mode))
+options = info (helper <*> ((,) <$> level <*> sub)) desc
   where
     desc = fullDesc
         <> progDesc "Administration CLI for credential and secret storage."
-
-    top v (r, m) = (v, r, m)
 
     sub = subparser $ mconcat
         [ mode "setup"
@@ -240,31 +178,6 @@ level = option (eitherReader r)
     r "error" = Right Error
     r e       = Left $ "Unrecognised log level: " ++ e
 
-store :: Parser Store
-store = bucket <|> table <|> pure (Tbl defaultTable)
-  where
-    bucket = fmap Bkt $ Bucket
-        <$> option text
-             ( long "bucket"
-            <> metavar "STRING"
-            <> help "S3 bucket name to use for credential storage."
-             )
-
-        <*> (optional $ option text
-             ( long "prefix"
-            <> metavar "STRING"
-            <> help "S3 object prefix to namespace credential storage."
-             ))
-
-    table = Tbl
-        <$> option text
-             ( long "table"
-            <> metavar "STRING"
-            <> help
-                ("DynamoDB table name to use for credential storage. \
-                \[default: " ++ show defaultTable ++ "]")
-             )
-
 key :: Parser KeyId
 key = option text
     ( long "key"
@@ -323,48 +236,33 @@ force = flag Prompt NoPrompt
     <> help "Always overwrite or remove, without an interactive prompt."
      )
 
+store :: Parser Store
+store = bucket <|> table <|> pure (Tbl defaultTable)
+  where
+    bucket = fmap Bkt $ Bucket
+        <$> option text
+             ( long "bucket"
+            <> metavar "STRING"
+            <> help "S3 bucket name to use for credential storage."
+             )
+
+        <*> (optional $ option text
+             ( long "prefix"
+            <> metavar "STRING"
+            <> help "S3 object prefix to namespace credential storage."
+             ))
+
+    table = Tbl
+        <$> option text
+             ( long "table"
+            <> metavar "STRING"
+            <> help
+                ("DynamoDB table name to use for credential storage. \
+                \[default: " ++ show defaultTable ++ "]")
+             )
+
 text :: FromText a => ReadM a
 text = eitherReader (fromText . Text.pack)
-
-exit :: IO () -> IO ()
-exit io = do
-    void $ catches io
-        [ handler _NotSetup $ \s ->
-            quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
-
-        -- , hd 3 _Invalid
-        -- , hd 4 _Missing
-        ]
-    exitSuccess
-  where
-     quit n m = err m >> exitWith (ExitFailure n)
-
-say :: (MonadIO m, ToLog a) => a -> m ()
-say x = liftIO $ Build.hPutBuilder stdout (build x <> "\n") >> hFlush stdout
-
-err :: (MonadIO m, ToLog a) => a -> m ()
-err x = liftIO $ Build.hPutBuilder stderr ("Error! " <> build x <> "\n")
-
-prompt :: MonadIO m => Force -> m () -> m ()
-prompt NoPrompt io = say "Running ..." >> io
-prompt Prompt   io = do
-    liftIO $ hPutStr stdout " -> Proceed? [y/n]: " >> hFlush stdout
-    a <- agree
-    case a of
-        Yes    -> say "Running ..." >> io
-        No     -> say "Cancelling ..."
-        What w -> say $ build w <> ", what? Cancelling ..."
-
-agree :: MonadIO m => m Agree
-agree = do
-    r <- map toLower . filter (not . isSpace) <$> liftIO getLine
-    return $! case r of
-        "yes" -> Yes
-        "y"   -> Yes
-        "no"  -> No
-        "n"   -> No
-        ""    -> No
-        x     -> What x
 
 complete :: forall a f. (Data a, ToText a, HasCompleter f) => Mod f a
 complete = completeWith $
