@@ -59,6 +59,8 @@ encrypt k (Context c) (Value x) = do
 
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
 
+    --consider scrubbing dataKey, plainText?
+
     ctext <- either throwM pure . eitherCryptoError $
         ctrCombine
             <$> cipherInit dataKey

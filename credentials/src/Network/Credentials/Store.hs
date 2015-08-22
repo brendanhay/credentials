@@ -37,14 +37,14 @@ import           Numeric.Natural
 
 class Storage m where
     type Layer m :: * -> *
-    type Ref   m :: *
+    data Ref   m :: *
 
     layer   :: m a -> Layer m a
 
     setup   ::                              Ref m -> m Setup
     cleanup ::                              Ref m -> m ()
     list    ::                              Ref m -> m [(Name, NonEmpty Version)]
-    insert  :: Name -> Version -> Secret -> Ref m -> m ()
+    insert  :: Name -> Secret            -> Ref m -> m Version
     select  :: Name -> Maybe Version     -> Ref m -> m Secret
 
     -- delete    :: a -> Name -> Version       -> M ()
@@ -54,13 +54,12 @@ put :: (MonadThrow m, MonadAWS m, Storage m)
     => KeyId
     -> Context
     -> Name
-    -> Version
     -> Value
     -> Ref m
-    -> m ()
-put k c n v x r = do
+    -> m Version
+put k c n x r = do
     s <- encrypt k c x
-    insert n v s r
+    insert n s r
 
 get :: (MonadThrow m, MonadAWS m, Storage m)
     => Context

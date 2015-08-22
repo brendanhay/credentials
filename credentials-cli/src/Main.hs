@@ -64,13 +64,14 @@ main = do
     l <- newLogger v stdout
     e <- newEnv r Discover <&> envLogger .~ l
 
-    catches (runResourceT . runAWS e . runApp $ program r m)
-        [ handler _NotSetup $ \s ->
-            quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
+    runResourceT . runAWS e . runApp $ program r m
+--    catches (runResourceT . runAWS e . runApp $ program r m)
+        -- [ handler _NotSetup $ \s ->
+        --     quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
 
-        -- , hd 3 _Invalid
-        -- , hd 4 _Missing
-        ]
+        -- -- , hd 3 _Invalid
+        -- -- , hd 4 _Missing
+        -- ]
 
 program :: Region -> Mode -> App ()
 program r = \case

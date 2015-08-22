@@ -30,6 +30,7 @@ import           Control.Lens              hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.Reader      (ask)
+import           Control.Retry
 import           Data.Bifunctor
 import           Data.ByteArray.Encoding
 import           Data.ByteString           (ByteString)
@@ -58,14 +59,15 @@ import           Network.Credentials.Types
 import           Numeric.Natural
 
 newtype Dynamo a = Dynamo { runDynamo :: AWS a }
-    deriving (Functor, Applicative, Monad, MonadThrow, MonadCatch)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
 
 instance MonadAWS Dynamo where
     liftAWS = Dynamo
 
 instance Storage Dynamo where
-    type Layer Dynamo = AWS
-    type Ref   Dynamo = Table
+    type  Layer Dynamo = AWS
+    newtype Ref Dynamo = Table Text
+        deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
     layer   = runDynamo
     setup   = setup
@@ -73,6 +75,11 @@ instance Storage Dynamo where
     list    = list
     insert  = put
     select  = get
+
+type Table = Ref Dynamo
+
+defaultTable :: Table
+defaultTable = Table "credential-store"
 
 setup :: MonadAWS m => Table -> m Setup
 setup t@(toText -> t') = do
@@ -117,19 +124,26 @@ list t = paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
 
     desc = NE.sortOn Down
 
-put :: (MonadThrow m, MonadAWS m)
-     => Name
-     -> Version
-     -> Secret
-     -> Table
-     -> m ()
-put n v s t = void . send $ putItem (toText t)
-    & piItem     .~ toVal n <> toVal v <> toVal s
-    & piExpected .~ Map.map (const new) (toVal v)
+put :: (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
+    => Name
+    -> Secret
+    -> Table
+    -> m Version
+put n s t = recovering policy [const cond] write
   where
-    new = expectedAttributeValue
-        & eavExists             ?~ False
-        & eavComparisonOperator ?~ Null
+    write = do
+        v <- maybe 1 (+1) <$> latest n t
+        let x = toVal v
+        void . send $ putItem (toText t)
+            & piItem     .~ toVal n <> x <> toVal s
+            & piExpected .~ Map.map (const expect) x
+        return v
+
+    cond   = handler_ _ConditionalCheckFailedException $ return True
+
+    expect = expectedAttributeValue & eavExists ?~ False
+
+    policy = constantDelay 1000 <> limitRetries 5
 
 get :: (MonadThrow m, MonadAWS m)
     => Name

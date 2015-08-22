@@ -61,6 +61,9 @@ newtype Name = Name Text
 newtype Value = Value ByteString
     deriving (Eq, Ord, FromText, ToByteString)
 
+instance Show Value where
+    show = const "Value *****"
+
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credential-store"
 
@@ -96,12 +99,6 @@ instance ToLog Version where
 
 data Bucket = Bucket BucketName (Maybe Text)
     deriving (Eq)
-
-defaultTable :: Table
-defaultTable = Table "credential-store"
-
-newtype Table = Table Text
-    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
 data CredentialError
 -- if context is None:

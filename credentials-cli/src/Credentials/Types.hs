@@ -85,16 +85,15 @@ instance MonadAWS App where
     liftAWS = App
 
 instance Storage App where
-    type Engine App = AWS
-
-    data Ref App
+    type Layer App = AWS
+    data Ref   App
         = Tbl (Ref Dynamo)
         | Bkt Bucket
 
-    engine = runApp
+    layer = runApp
 
     setup = \case
-        Tbl t -> wrap (setup t)
+        Tbl t -> App (layer (setup t))
 
     cleanup = \case
         Tbl t -> wrap (cleanup t)
@@ -102,11 +101,14 @@ instance Storage App where
     list = \case
         Tbl t -> wrap (list t)
 
-    insert n s v = \case
-        Tbl t -> wrap (insert n s v t)
+    insert n s = \case
+        Tbl t -> wrap (insert n s t)
 
     select n v = \case
         Tbl t -> wrap (select n v t)
+
+wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
+wrap = App . layer
 
 type Store = Ref App
 
@@ -117,6 +119,3 @@ instance ToLog Store where
 
 instance Show Store where
     show = BS8.unpack . toBS . build
-
-wrap :: (Storage s, Engine s ~ Engine App) => s a -> App a
-wrap = App . engine
