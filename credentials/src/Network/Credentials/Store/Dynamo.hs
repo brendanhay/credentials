@@ -1,10 +1,14 @@
+{-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
@@ -40,6 +44,7 @@ import           Data.Monoid
 import           Data.Ord
 import qualified Data.Text                 as Text
 import           Data.Typeable
+import           GHC.Exts
 import           Network.AWS
 import           Network.AWS               (runAWS)
 import           Network.AWS               (AWS, liftAWS)
@@ -52,13 +57,6 @@ import qualified Network.Credentials.Store as Store
 import           Network.Credentials.Types
 import           Numeric.Natural
 
-fieldName, fieldVersion, fieldKey, fieldContents, fieldHMAC :: Text
-fieldName     = "name"
-fieldVersion  = "version"
-fieldKey      = "key"
-fieldContents = "contents"
-fieldHMAC     = "hmac"
-
 newtype Dynamo a = Dynamo { runDynamo :: AWS a }
     deriving (Functor, Applicative, Monad, MonadThrow, MonadCatch)
 
@@ -66,37 +64,27 @@ instance MonadAWS Dynamo where
     liftAWS = Dynamo
 
 instance Storage Dynamo where
-    type Engine Dynamo = AWS
-    newtype Ref Dynamo = Table Text
+    type Layer Dynamo = AWS
+    type Ref   Dynamo = Table
 
-    engine  = runDynamo
+    layer   = runDynamo
     setup   = setup
     cleanup = cleanup
     list    = list
     insert  = put
-
-type Table = Ref Dynamo
-
-deriving instance Eq       Table
-deriving instance Show     Table
-deriving instance FromText Table
-deriving instance ToText   Table
-deriving instance ToLog    Table
-
-defaultTable :: Table
-defaultTable = Table "credential-store"
+    select  = get
 
 setup :: MonadAWS m => Table -> m Setup
 setup t@(toText -> t') = do
     p <- exists t
 
     unless p $ do
-        let keys = keySchemaElement fieldName    Hash
-               :| [keySchemaElement fieldVersion Range]
+        let keys = keySchemaElement nameField    Hash
+               :| [keySchemaElement versionField Range]
             iops = provisionedThroughput 1 1
             attr = ctAttributeDefinitions .~
-                [ attributeDefinition fieldName S
-                , attributeDefinition fieldVersion N
+                [ attributeDefinition nameField    S
+                , attributeDefinition versionField N
                 ]
         void $ send (createTable t' keys iops & attr)
         void $ await tableExists (describeTable t')
@@ -116,18 +104,14 @@ cleanup t@(toText -> t') = do
 list :: (MonadCatch m, MonadAWS m)
      => Table
      -> m [(Name, NonEmpty Version)]
-list t =
-    catching_ _ResourceNotFoundException rq $ throwM (NotSetup (toText t))
+list t = paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
   where
-    rq = paginate (scan (toText t) & sAttributesToGet ?~ fieldName :| [fieldVersion])
-        =$= CL.concatMapM (traverse parse . view srsItems)
-        =$= CL.groupOn1 fst
-        =$= CL.map group
-         $$ CL.consume
+    result = CL.concatMapM (traverse fromVal . view srsItems)
+         =$= CL.groupOn1 fst
+         =$= CL.map group
+         =$= CL.consume
 
-    parse m = (,)
-        <$> fromAttrs fieldName    avS m
-        <*> fromAttrs fieldVersion avN m
+    fields = nameField :| [versionField]
 
     group ((k, v), map snd -> vs) = (k, desc (v :| vs))
 
@@ -135,64 +119,124 @@ list t =
 
 put :: (MonadThrow m, MonadAWS m)
      => Name
+     -> Version
      -> Secret
      -> Table
-     -> m Version
-put n (Secret k c h) t@(toText -> t') = do
-    v <- maybe 1 (+1) <$> latest n t
+     -> m ()
+put n v s t = void . send $ putItem (toText t)
+    & piItem     .~ toVal n <> toVal v <> toVal s
+    & piExpected .~ Map.map (const new) (toVal v)
+  where
+    new = expectedAttributeValue
+        & eavExists             ?~ False
+        & eavComparisonOperator ?~ Null
 
-    void . send $ putItem t' & piItem .~ Map.fromList
-        [ (fieldName,     toAttr avS toText n)
-        , (fieldVersion,  toAttr avN toText v)
-        , (fieldKey,      toAttr avB toBS   k)
-        , (fieldContents, toAttr avB toBS   c)
-        , (fieldHMAC,     toAttr avS toText h)
-        ]
+get :: (MonadThrow m, MonadAWS m)
+    => Name
+    -> Maybe Version
+    -> Table
+    -> m Secret
+get n v t = send (named n t & version v) >>= result
+  where
+    result  = maybe missing fromVal . listToMaybe . view qrsItems
+    missing = throwM $ SecretMissing n (toText t)
 
-    return v
+    version Nothing  = id
+    version (Just x) = qKeyConditions <>~ equals x
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
        -> Table
        -> m (Maybe Version)
 latest n t = do
-    rs <- send $ query (toText t)
-        & qLimit            ?~ 1
-        & qScanIndexForward ?~ False
-        & qConsistentRead   ?~ True
-        & qKeyConditions    .~ Map.fromList
-            [ ( fieldName, condition EQ' & cAttributeValueList .~
-                  [attributeValue & avS ?~ toText n]
-              )
-            ]
-
-    case rs ^. qrsItems of
-        []  -> return Nothing
-        m:_ -> Just <$> fromAttrs fieldVersion avN m
+    rs <- send (named n t)
+    case listToMaybe (rs ^. qrsItems) of
+        Nothing -> pure Nothing
+        Just  m -> Just <$> fromVal m
 
 exists :: MonadAWS m => Table -> m Bool
 exists t = paginate listTables
     =$= concatMapC (view ltrsTableNames)
      $$ (isJust <$> findC (== toText t))
 
-toAttr :: Setter' AttributeValue (Maybe b)
-       -> (a -> b)
-       -> a
-       -> AttributeValue
-toAttr l f v = attributeValue & l ?~ f v
+named :: Name -> Table -> Query
+named n t = query (toText t)
+    & qLimit            ?~ 1
+    & qScanIndexForward ?~ False
+    & qConsistentRead   ?~ True
+    & qKeyConditions    .~ equals n
 
-fromAttrs :: (MonadThrow m, FromText a)
-          => Text
-          -> Getter AttributeValue (Maybe Text)
-          -> HashMap Text AttributeValue
+equals :: Val a => a -> HashMap Text Condition
+equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toVal
+
+nameField, versionField :: Text
+nameField    = name (Proxy :: Proxy Name)
+versionField = name (Proxy :: Proxy Version)
+
+class Val a where
+    toVal   :: a -> HashMap Text AttributeValue
+    fromVal :: MonadThrow m => HashMap Text AttributeValue -> m a
+
+    default toVal :: IsField a b => a -> HashMap Text AttributeValue
+    toVal = toField
+
+    default fromVal :: (MonadThrow m, Monoid b, ToText b, IsField a b)
+                    => HashMap Text AttributeValue
+                    -> m a
+    fromVal = fromField
+
+instance (Val a, Val b) => Val (a, b) where
+    toVal (x, y) = toVal x <> toVal y
+    fromVal m    = (,) <$> fromVal m <*> fromVal m
+
+instance Val Secret where
+    toVal (Secret k h c) = toVal k <> toVal h <> toVal c
+    fromVal m = Secret <$> fromVal m <*> fromVal m <*> fromVal m
+
+instance Val Name
+instance Val Version
+instance Val Key
+instance Val Cipher
+instance Val HMAC256
+
+class IsField a b | a -> b where
+    field :: Field a b
+
+instance IsField Name    Text       where field = Field "name"     avS text
+instance IsField Version Text       where field = Field "version"  avN text
+instance IsField Key     ByteString where field = Field "key"      avB (bytes Key)
+instance IsField Cipher  ByteString where field = Field "contents" avB (bytes Cipher)
+instance IsField HMAC256 ByteString where field = Field "hmac"     avB (bytes Hex)
+
+data Field a b = Field Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
+
+toField :: IsField a b => a -> HashMap Text AttributeValue
+toField x = let Field k l p = field in [(k, attributeValue & l ?~ review p x)]
+
+fromField :: (MonadThrow m, Monoid b, ToText b, IsField a b)
+          => HashMap Text AttributeValue
           -> m a
-fromAttrs k l m = require >>= parse
+fromField m = require >>= parse
   where
-    parse x = maybe missing (either invalid pure . fromText) (x ^. l)
+    Field k l p = field
+
     require = maybe missing pure (Map.lookup k m)
 
-    missing :: MonadThrow m => m a
-    missing = throwM (Missing k)
+    parse (attr -> x) = maybe (invalid x) pure (preview p x)
 
-    invalid :: MonadThrow m => String -> m a
-    invalid e = throwM (Invalid k e)
+    attr = fromMaybe mempty . view l
+
+    missing = throwM (FieldMissing k (Map.keys m))
+    invalid = throwM . FieldInvalid k . toText
+
+name :: forall a b. IsField a b => Proxy a -> Text
+name _ = let (Field k _ _) = field :: Field a b in k
+
+text :: (FromText a, ToText a) => Prism' Text a
+text = prism' toText go
+  where
+    go x | Text.null x = Nothing
+         | otherwise   = either (const Nothing) Just (fromText x)
+
+bytes :: ToByteString a => (ByteString -> a) -> Prism' ByteString a
+bytes w = prism' toBS (Just . w)

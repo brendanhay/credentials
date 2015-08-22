@@ -96,8 +96,17 @@ instance Storage App where
     setup = \case
         Tbl t -> wrap (setup t)
 
+    cleanup = \case
+        Tbl t -> wrap (cleanup t)
+
     list = \case
         Tbl t -> wrap (list t)
+
+    insert n s v = \case
+        Tbl t -> wrap (insert n s v t)
+
+    select n v = \case
+        Tbl t -> wrap (select n v t)
 
 type Store = Ref App
 

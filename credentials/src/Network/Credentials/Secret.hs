@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Network.Credentials.Secret
@@ -40,7 +41,7 @@ import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.KMS
+import           Network.AWS.KMS           as KMS
 import           Network.Credentials.Types
 import           Numeric.Natural
 
@@ -56,7 +57,7 @@ encrypt k (Context c) (Value x) = do
         & gdkNumberOfBytes     ?~ 64
         & gdkEncryptionContext .~ c
 
-    let (dataKey, hmacKey) = BS.splitAt 32 (rs ^. gdkrsPlaintext)
+    let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
 
     ctext <- either throwM pure . eitherCryptoError $
         ctrCombine
@@ -66,6 +67,52 @@ encrypt k (Context c) (Value x) = do
 
     -- Compute an HMAC using the hmac key and the cipher text.
     return $! Secret
-        (Key (rs ^. gdkrsCiphertextBlob))
-        (Ciphertext ctext)
-        (HMAC' (hmac hmacKey ctext))
+        (Key    (rs ^. gdkrsCiphertextBlob))
+        (Cipher ctext)
+        (Digest (hmac hmacKey ctext))
+
+decrypt :: (MonadThrow m, MonadAWS m)
+        => Context
+        -> Secret
+        -> m Value
+decrypt (Context c) (Secret (toBS -> key) (toBS -> ctext) h) = do
+    rs <- send $ KMS.decrypt key & dEncryptionContext .~ c
+
+    -- Check the HMAC before we decrypt to verify ciphertext integrity
+    -- try:
+    --     kms_response = kms.decrypt(CiphertextBlob=b64decode(material['key']), EncryptionContext=context)
+    -- except InvalidCiphertextException:
+    --     if context is None:
+    --         msg = ("Could not decrypt hmac key with KMS. The credential may "
+    --                "require that an encryption context be provided to decrypt "
+    --                "it.")
+    --     else:
+    --         msg = ("Could not decrypt hmac key with KMS. The encryption "
+    --                "context provided may not match the one used when the "
+    --                "credential was stored.")
+
+    -- Decrypted plaintext data. This value may not be returned if the customer
+    -- master key is not available or if you didn\'t have permission to use it.
+
+    let (dataKey, hmacKey) = splitKey $ fromMaybe mempty (rs ^. drsPlaintext)
+
+    unless (Digest (hmac hmacKey ctext) == h) $
+        throwM (userError "IntegrityError")
+
+    -- -- hmac = HMAC(hmac_key, msg=b64decode(material['contents']),
+    -- --             digestmod=SHA256)
+
+    -- if hmac.hexdigest() != material['hmac']:
+    --     raise IntegrityError("Computed HMAC on %s does not match stored HMAC" --
+    --                          % name)
+
+    plain <- either throwM pure . eitherCryptoError $
+        ctrCombine
+            <$> cipherInit dataKey
+            <*> pure (ivAdd nullIV 128 :: IV AES128)
+            <*> pure ctext
+
+    return $! Value plain
+
+splitKey :: ByteString -> (ByteString, ByteString)
+splitKey = BS.splitAt 32

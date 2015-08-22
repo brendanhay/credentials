@@ -16,7 +16,6 @@ module Network.Credentials
     (
       module Network.Credentials.Store
     , DB.Dynamo
-    , DB.defaultTable
 
     -- * Re-exported Types
     , module Network.Credentials.Types

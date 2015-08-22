@@ -28,6 +28,7 @@ import           Control.Monad.Reader
 import           Credentials.IO
 import           Credentials.Types
 import           Data.ByteString                      (ByteString)
+import qualified Data.ByteString                      as BS
 import           Data.ByteString.Builder              (Builder)
 import qualified Data.ByteString.Builder              as Build
 import qualified Data.ByteString.Char8                as BS8
@@ -40,6 +41,7 @@ import           Data.List.NonEmpty                   (NonEmpty (..))
 import qualified Data.List.NonEmpty                   as NE
 import           Data.Maybe
 import qualified Data.Text                            as Text
+import qualified Data.Text.IO                         as Text
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
@@ -73,18 +75,18 @@ main = do
 program :: Region -> Mode -> App ()
 program r = \case
     Setup s -> do
-        say $ "Creating table " <> build s <> " in " <> build r <> "."
+        say $ "Setting up " <> build s <> " in " <> build r <> "."
         x <- Cred.setup s
-        say $ "Table " <> build s <> " " <> build x <> "."
+        say $ build s <> " " <> build x <> "."
 
-    -- Cleanup s f -> do
-    --     say $ "This will delete table " <> build s <> " from " <> build r <> "!"
-    --     prompt f $ do
-    --         Cred.cleanup s
-    --         say $ "Table " <> build s <> " deleted."
+    Cleanup s f -> do
+        say $ "This will delete " <> build s <> " from " <> build r <> "!"
+        prompt f $ do
+            Cred.cleanup s
+            say $ build s <> " deleted."
 
     List s f -> do
-        say $ "Listing " <> build s <> " in " <> build r <> ":"
+        say $ "LIST " <> build s <> " in " <> build r <> ":"
 
         xs <- list s
 
@@ -94,15 +96,17 @@ program r = \case
             mapM_ (say . mappend "    " . build) vs
         say "Done."
 
-    -- Put s k c n x -> do
-    --     say $ "Writing secret to " <> build n <> "."
-    --     v <- Cred.put k c n x s
-    --     say $ "Wrote " <> build n <> " as " <> build v <> "."
+    Put s k c n x -> do
+        say $ "PUT " <> build n <> " to " <> build s <> "."
+        v <- Cred.put k c n x s
+        say $ "Wrote version " <> build v <> " of " <> build n <> "."
 
-    -- Get s c n v -> do
-    --     say $ "Retrieving " <> build n <> " secret."
-    --     v <- Cred.get c n v s
-    --     say $ "Wrote " <> build n <> " as " <> build v <> "."
+    Get s c n v l -> do
+        say $ "GET " <> build n <> " secret."
+        x <- Cred.get c n v s
+        case l of
+            Append -> liftIO $ BS.putStrLn (toBS x)
+            Ignore -> liftIO $ BS.putStr   (toBS x)
 
 data Mode
     = Setup   !Store

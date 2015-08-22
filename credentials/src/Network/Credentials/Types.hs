@@ -2,6 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -23,6 +24,7 @@ import           Control.Monad.Catch
 import           Control.Monad.Trans.AWS
 import           Crypto.Hash             (SHA256)
 import           Crypto.MAC.HMAC         (HMAC)
+import           Data.ByteArray
 import           Data.ByteArray.Encoding
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as BS8
@@ -50,42 +52,41 @@ instance ToLog Setup where
     build Created = "created"
     build Exists  = "exists"
 
+newtype KeyId = KeyId Text
+    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
+
 newtype Name = Name Text
     deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
-newtype Value = Value Text
-    deriving (FromText)
-
-instance Show Value where
-    show = const "Value *****"
-
-newtype KeyId = KeyId Text
-    deriving (Eq, ToText, FromText)
-
-instance Show KeyId where
-    show = Text.unpack . toText
+newtype Value = Value ByteString
+    deriving (Eq, Ord, FromText, ToByteString)
 
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credential-store"
 
-newtype Key = Key ByteString
-    deriving (ToByteString)
+-- | Wrapped Key.
+newtype Key = Key ByteString deriving (ToByteString)
 
-newtype Ciphertext = Ciphertext ByteString
-    deriving (ToByteString)
+-- | Encrypted Ciphertext.
+newtype Cipher = Cipher ByteString deriving (ToByteString)
 
-newtype HMAC' = HMAC' (HMAC SHA256)
+-- | HMAC SHA256 of the Ciphertext.
+data HMAC256
+    = Hex    ByteString
+    | Digest (HMAC SHA256)
 
-instance ToText HMAC' where
-    toText (HMAC' h) = toText (convertToBase Base16 h :: ByteString)
+instance Eq HMAC256 where
+    a == b = toBS a == toBS b
 
-data Secret = Secret Key Ciphertext HMAC'
+instance ToByteString HMAC256 where
+    toBS = \case
+        Hex    h -> h
+        Digest d -> convertToBase Base16 d
 
-instance Show Secret where
-    show = const "Secret *****"
+data Secret = Secret Key Cipher HMAC256
 
 newtype Context = Context (HashMap Text Text)
-    deriving (Show, Monoid)
+    deriving (Eq, Show, Monoid)
 
 newtype Version = Version Natural
     deriving (Eq, Ord, Num, Show, FromText, ToText)
@@ -93,41 +94,107 @@ newtype Version = Version Natural
 instance ToLog Version where
     build (Version n) = build (toInteger n)
 
--- newtype Table = Table Text
---     deriving (Eq, Ord, Show, IsString, FromText, ToText, ToLog)
-
 data Bucket = Bucket BucketName (Maybe Text)
     deriving (Eq)
 
-data SetupError
-    = NotSetup Text
-      deriving (Eq, Typeable)
+defaultTable :: Table
+defaultTable = Table "credential-store"
 
-makeClassyPrisms ''SetupError
+newtype Table = Table Text
+    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
-instance Show SetupError where
-    show (NotSetup s) = "Store " ++ show s ++ " doesn't exist."
+data CredentialError
+-- if context is None:
+--     msg = ("Could not decrypt hmac key with KMS. The credential may "
+--            "require that an encryption context be provided to decrypt "
+--            "it.")
+-- else:
+--     msg = ("Could not decrypt hmac key with KMS. The encryption "
+--            "context provided may not match the one used when the "
+--            "credential was stored.")
 
-instance Exception SetupError
+    = IntegrityFailure Name (HMAC SHA256) (HMAC SHA256)
+      -- ^ The computed HMAC doesn't matched the stored HMAC.
 
-instance AsSetupError SomeException where
-    _SetupError = exception
+-- if hmac.hexdigest() != material['hmac']:
+--         raise IntegrityError("Computed HMAC on %s does not match stored HMAC"
 
-data ItemError
-    = NotFound Name
-    | Invalid  Text String
-    | Missing  Text
-      deriving (Eq, Typeable)
+    | EncryptFailure Name Context Text
+      -- ^ Failure occured during local encryption.
 
-makeClassyPrisms ''ItemError
+    | DecryptFailure Name Context Text
+      -- ^ Failure occured during local decryption.
 
-instance Show ItemError where
-    show = \case
-        NotFound n   -> "Not found: "   ++ Text.unpack (toText n) ++ "."
-        Invalid  k e -> "Invalid key: " ++ Text.unpack k ++ ", " ++ e ++ "."
-        Missing  k   -> "Missing key: " ++ Text.unpack k ++ "."
+    | StorageMissing Text
+      -- ^ Storage doesn't exist, or has gone on holiday.
 
-instance Exception ItemError
+    | FieldMissing Text [Text]
+      -- ^ Missing field from the storage engine.
 
-instance AsItemError SomeException where
-    _ItemError = exception
+    | FieldInvalid Text Text
+      -- ^ Unable to parse field from the storage engine.
+
+    | SecretMissing Name Text
+      -- ^ Secret with the specified name cannot found.
+
+    | OptimisticLockFailure Name Version Text
+      -- ^ Attempting to insert a version that (already, or now) exists.
+
+      deriving (Eq)
+
+instance Show CredentialError where
+    show = const "foo"
+
+--  except ConditionalCheckFailedException:
+--                 latestVersion = getHighestVersion(args.credential, region,
+--                                                   args.table)
+--                 printStdErr("%s version %s is already in the credential store."
+--                             "Use the -v flag to specify a new version" %
+--                             (args.credential, latestVersion))
+
+-- try:
+--         kms_response = kms.generate_data_key(KeyId=kms_key, EncryptionContext=context, NumberOfBytes=64)
+--     except:
+--         raise KmsError("Could not generate key using KMS key %s" % kms_key)
+
+instance Exception CredentialError
+
+-- data SetupError
+--     = NotSetup Text
+--       deriving (Eq, Typeable)
+
+-- makeClassyPrisms ''SetupError
+
+-- instance Show SetupError where
+--     show (NotSetup s) = "Store " ++ show s ++ " doesn't exist."
+
+-- instance Exception SetupError
+
+-- instance AsSetupError SomeException where
+--     _SetupError = exception
+
+-- data ItemError
+--     = NotFound Name
+--     | Invalid  Text String
+--     | Missing  Text
+--       deriving (Eq, Typeable)
+
+-- makeClassyPrisms ''ItemError
+
+-- instance Show ItemError where
+--     show = \case
+--         NotFound n   -> "Not found: "   ++ Text.unpack (toText n) ++ "."
+--         Invalid  k e -> "Invalid key: " ++ Text.unpack k ++ ", " ++ e ++ "."
+--         Missing  k   -> "Missing key: " ++ Text.unpack k ++ "."
+
+-- instance Exception ItemError
+
+-- instance AsItemError SomeException where
+--     _ItemError = exception
+
+-- consider splitting into separate libraries:
+--     credentials-dynamodb
+--     credentials-s3
+--     credentials-sqlite
+--     credentials-file
+--     credentials-redis ! with tw's redis-io

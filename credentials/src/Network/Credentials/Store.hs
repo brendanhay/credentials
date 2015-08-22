@@ -35,30 +35,37 @@ import           Network.Credentials.Secret
 import           Network.Credentials.Types
 import           Numeric.Natural
 
-class Storage s where
-    type Engine s :: * -> *
-    data Ref    s :: *
+class Storage m where
+    type Layer m :: * -> *
+    type Ref   m :: *
 
-    engine  :: s a -> Engine s a
+    layer   :: m a -> Layer m a
 
-    setup   ::                          Ref s -> s Setup
-    cleanup ::                          Ref s -> s ()
-    list    ::                          Ref s -> s [(Name, NonEmpty Version)]
-    insert  :: Name -> Secret        -> Ref s -> s Version
-    select  :: Name -> Maybe Version -> Ref s -> s (Maybe Secret)
+    setup   ::                              Ref m -> m Setup
+    cleanup ::                              Ref m -> m ()
+    list    ::                              Ref m -> m [(Name, NonEmpty Version)]
+    insert  :: Name -> Version -> Secret -> Ref m -> m ()
+    select  :: Name -> Maybe Version     -> Ref m -> m Secret
 
     -- delete    :: a -> Name -> Version       -> M ()
     -- deleteAll :: a -> Name                  -> M ()
 
-put :: (MonadThrow s, MonadAWS s, Storage s)
+put :: (MonadThrow m, MonadAWS m, Storage m)
     => KeyId
     -> Context
     -> Name
+    -> Version
     -> Value
-    -> Ref s
-    -> s Version
-put k c n v r = do
-    s <- encrypt k c v
-    insert n s r
+    -> Ref m
+    -> m ()
+put k c n v x r = do
+    s <- encrypt k c x
+    insert n v s r
 
--- get ::
+get :: (MonadThrow m, MonadAWS m, Storage m)
+    => Context
+    -> Name
+    -> Maybe Version
+    -> Ref m
+    -> m Value
+get c n v r = select n v r >>= decrypt c
