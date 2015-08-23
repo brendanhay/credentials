@@ -1,14 +1,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 -- |
--- Module      : Network.Credentials.Store.S3
+-- Module      : Credentials.Store.S3
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Network.Credentials.Store.S3 where
+module Credentials.Store.S3 where
 
 import           Conduit                   hiding (await)
 import           Control.Exception.Lens
@@ -27,7 +27,7 @@ import           Network.AWS.Data.Text
 import           Network.AWS.DynamoDB
 import           Network.AWS.S3
 import           Network.AWS.S3            (BucketName, ObjectVersionId)
-import           Network.Credentials.Types
+import           Credentials.Types
 import           Numeric.Natural
 
 -- instance SecretStore m (BucketName, Maybe Text) where

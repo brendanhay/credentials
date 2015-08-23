@@ -14,48 +14,52 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 -- |
--- Module      : Network.Credentials.Store.Dynamo
+-- Module      : Credentials.Store.Dynamo
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Network.Credentials.Store.Dynamo where
+module Credentials.Store.Dynamo
+    ( Dynamo
+    , Table
+    , defaultTable
+    ) where
 
-import           Conduit                   hiding (await, scan)
+import           Conduit                 hiding (await, scan)
 import           Control.Applicative
 import           Control.Exception.Lens
-import           Control.Lens              hiding (Context)
+import           Control.Lens            hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
-import           Control.Monad.Reader      (ask)
+import           Control.Monad.Reader    (ask)
+import           Control.Monad.Trans.AWS (paginateWith)
 import           Control.Retry
+import           Credentials.Types
 import           Data.Bifunctor
 import           Data.ByteArray.Encoding
-import           Data.ByteString           (ByteString)
-import qualified Data.Conduit.List         as CL
-import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as Map
-import           Data.List                 (sortBy)
-import           Data.List.NonEmpty        (NonEmpty (..))
-import qualified Data.List.NonEmpty        as NE
+import           Data.ByteString         (ByteString)
+import qualified Data.Conduit.List       as CL
+import           Data.HashMap.Strict     (HashMap)
+import qualified Data.HashMap.Strict     as Map
+import           Data.List               (sortBy)
+import           Data.List.NonEmpty      (NonEmpty (..))
+import qualified Data.List.NonEmpty      as NE
 import           Data.Maybe
 import           Data.Monoid
 import           Data.Ord
-import qualified Data.Text                 as Text
+import qualified Data.Text               as Text
 import           Data.Typeable
 import           GHC.Exts
 import           Network.AWS
-import           Network.AWS               (runAWS)
-import           Network.AWS               (AWS, liftAWS)
-import           Network.AWS               (Region)
+import           Network.AWS             (runAWS)
+import           Network.AWS             (AWS, liftAWS)
+import           Network.AWS             (Region)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Network.AWS.DynamoDB
-import           Network.Credentials.Store (Ref, Storage)
-import qualified Network.Credentials.Store as Store
-import           Network.Credentials.Types
+import           Network.AWS.Endpoint
 import           Numeric.Natural
 
 newtype Dynamo a = Dynamo { runDynamo :: AWS a }
@@ -70,9 +74,9 @@ instance Storage Dynamo where
         deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
     layer   = runDynamo
-    setup   = setup
-    cleanup = cleanup
-    list    = list
+    setup   = setupTable
+    cleanup = cleanupTable
+    list    = listVersions
     insert  = put
     select  = get
 
@@ -81,10 +85,9 @@ type Table = Ref Dynamo
 defaultTable :: Table
 defaultTable = Table "credential-store"
 
-setup :: MonadAWS m => Table -> m Setup
-setup t@(toText -> t') = do
+setupTable :: MonadAWS m => Table -> m Setup
+setupTable t@(toText -> t') = do
     p <- exists t
-
     unless p $ do
         let keys = keySchemaElement nameField    Hash
                :| [keySchemaElement versionField Range]
@@ -95,23 +98,20 @@ setup t@(toText -> t') = do
                 ]
         void $ send (createTable t' keys iops & attr)
         void $ await tableExists (describeTable t')
+    return $ if p then Exists else Created
 
-    return $
-        if p
-            then Exists
-            else Created
-
-cleanup :: MonadAWS m => Table -> m ()
-cleanup t@(toText -> t') = do
+cleanupTable :: MonadAWS m => Table -> m ()
+cleanupTable t@(toText -> t') = do
     p <- exists t
     when p $ do
         void $ send (deleteTable t')
         void $ await tableNotExists (describeTable t')
 
-list :: (MonadCatch m, MonadAWS m)
-     => Table
-     -> m [(Name, NonEmpty Version)]
-list t = paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
+listVersions :: (MonadCatch m, MonadAWS m)
+             => Table
+             -> m [(Name, NonEmpty Version)]
+listVersions t =
+    paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
   where
     result = CL.concatMapM (traverse fromVal . view srsItems)
          =$= CL.groupOn1 fst
@@ -149,7 +149,7 @@ get :: (MonadThrow m, MonadAWS m)
     => Name
     -> Maybe Version
     -> Table
-    -> m Secret
+    -> m (Secret, Version)
 get n v t = send (named n t & version v) >>= result
   where
     result  = maybe missing fromVal . listToMaybe . view qrsItems

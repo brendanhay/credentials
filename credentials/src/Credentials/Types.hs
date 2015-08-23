@@ -7,14 +7,14 @@
 {-# LANGUAGE TypeFamilies               #-}
 
 -- |
--- Module      : Network.Credentials.Types
+-- Module      : Credentials.Types
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Network.Credentials.Types where
+module Credentials.Types where
 
 import           Conduit                 hiding (await)
 import           Control.Exception.Lens
@@ -29,6 +29,7 @@ import           Data.ByteArray.Encoding
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as BS8
 import           Data.HashMap.Strict     (HashMap)
+import qualified Data.HashMap.Strict     as Map
 import           Data.List.NonEmpty      (NonEmpty (..))
 import           Data.Maybe
 import           Data.Monoid
@@ -43,37 +44,45 @@ import           Network.AWS.S3
 import           Network.AWS.S3          (BucketName, ObjectVersionId)
 import           Numeric.Natural
 
-data Setup
-    = Created
-    | Exists
-      deriving (Eq, Show)
-
-instance ToLog Setup where
-    build Created = "created"
-    build Exists  = "exists"
-
+-- | The KMS master key identifier.
 newtype KeyId = KeyId Text
     deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
+defaultKeyId :: KeyId
+defaultKeyId = KeyId "alias/credential-store"
+
+-- | A shared/readable name for a secret.
 newtype Name = Name Text
     deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
+-- | An unencrypted secret value.
 newtype Value = Value ByteString
     deriving (Eq, Ord, FromText, ToByteString)
 
 instance Show Value where
     show = const "Value *****"
 
-defaultKeyId :: KeyId
-defaultKeyId = KeyId "alias/credential-store"
+-- | An incrementing version number.
+newtype Version = Version Natural
+    deriving (Eq, Ord, Num, Show, FromText, ToText)
 
--- | Wrapped Key.
+instance ToLog Version where
+    build (Version n) = build (toInteger n)
+
+-- | An encryption context.
+newtype Context = Context { context :: HashMap Text Text }
+    deriving (Eq, Show, Monoid)
+
+blank :: Context -> Bool
+blank = Map.null . context
+
+-- | Wrapped key.
 newtype Key = Key ByteString deriving (ToByteString)
 
--- | Encrypted Ciphertext.
+-- | Encrypted ciphertext.
 newtype Cipher = Cipher ByteString deriving (ToByteString)
 
--- | HMAC SHA256 of the Ciphertext.
+-- | HMAC SHA256 of the Ciphertext, possibly hex-encoded.
 data HMAC256
     = Hex    ByteString
     | Digest (HMAC SHA256)
@@ -86,19 +95,21 @@ instance ToByteString HMAC256 where
         Hex    h -> h
         Digest d -> convertToBase Base16 d
 
+instance Show HMAC256 where
+    show = BS8.unpack . toBS
+
+-- | An encrypted secret.
 data Secret = Secret Key Cipher HMAC256
 
-newtype Context = Context (HashMap Text Text)
-    deriving (Eq, Show, Monoid)
+data Setup
+    = Created
+    | Exists
+      deriving (Eq, Show)
 
-newtype Version = Version Natural
-    deriving (Eq, Ord, Num, Show, FromText, ToText)
-
-instance ToLog Version where
-    build (Version n) = build (toInteger n)
-
-data Bucket = Bucket BucketName (Maybe Text)
-    deriving (Eq)
+instance ToLog Setup where
+    build = \case
+        Created -> "created"
+        Exists  -> "exists"
 
 data CredentialError
 -- if context is None:
@@ -110,16 +121,17 @@ data CredentialError
 --            "context provided may not match the one used when the "
 --            "credential was stored.")
 
-    = IntegrityFailure Name (HMAC SHA256) (HMAC SHA256)
+    = IntegrityFailure Name HMAC256 HMAC256
       -- ^ The computed HMAC doesn't matched the stored HMAC.
 
 -- if hmac.hexdigest() != material['hmac']:
 --         raise IntegrityError("Computed HMAC on %s does not match stored HMAC"
 
-    | EncryptFailure Name Context Text
+
+    | EncryptFailure Context Name Text
       -- ^ Failure occured during local encryption.
 
-    | DecryptFailure Name Context Text
+    | DecryptFailure Context Name Text
       -- ^ Failure occured during local decryption.
 
     | StorageMissing Text
@@ -137,10 +149,7 @@ data CredentialError
     | OptimisticLockFailure Name Version Text
       -- ^ Attempting to insert a version that (already, or now) exists.
 
-      deriving (Eq)
-
-instance Show CredentialError where
-    show = const "foo"
+      deriving (Eq, Show, Typeable)
 
 --  except ConditionalCheckFailedException:
 --                 latestVersion = getHighestVersion(args.credential, region,
@@ -156,42 +165,18 @@ instance Show CredentialError where
 
 instance Exception CredentialError
 
--- data SetupError
---     = NotSetup Text
---       deriving (Eq, Typeable)
+makeClassyPrisms ''CredentialError
 
--- makeClassyPrisms ''SetupError
+class Storage m where
+    type Layer m :: * -> *
+    data Ref   m :: *
 
--- instance Show SetupError where
---     show (NotSetup s) = "Store " ++ show s ++ " doesn't exist."
+    layer     :: m a -> Layer m a
 
--- instance Exception SetupError
-
--- instance AsSetupError SomeException where
---     _SetupError = exception
-
--- data ItemError
---     = NotFound Name
---     | Invalid  Text String
---     | Missing  Text
---       deriving (Eq, Typeable)
-
--- makeClassyPrisms ''ItemError
-
--- instance Show ItemError where
---     show = \case
---         NotFound n   -> "Not found: "   ++ Text.unpack (toText n) ++ "."
---         Invalid  k e -> "Invalid key: " ++ Text.unpack k ++ ", " ++ e ++ "."
---         Missing  k   -> "Missing key: " ++ Text.unpack k ++ "."
-
--- instance Exception ItemError
-
--- instance AsItemError SomeException where
---     _ItemError = exception
-
--- consider splitting into separate libraries:
---     credentials-dynamodb
---     credentials-s3
---     credentials-sqlite
---     credentials-file
---     credentials-redis ! with tw's redis-io
+    setup     ::                              Ref m -> m Setup
+    cleanup   ::                              Ref m -> m ()
+    list      ::                              Ref m -> m [(Name, NonEmpty Version)]
+    insert    :: Name -> Secret            -> Ref m -> m Version
+    select    :: Name -> Maybe Version     -> Ref m -> m (Secret, Version)
+    delete    :: Name -> Version           -> Ref m -> m ()
+    deleteAll :: Name                      -> Ref m -> m ()

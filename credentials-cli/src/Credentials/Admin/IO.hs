@@ -9,43 +9,28 @@
 {-# LANGUAGE TypeFamilies               #-}
 
 -- |
--- Module      : Credentials.IO
+-- Module      : Credentials.Admin.IO
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.IO where
+module Credentials.Admin.IO where
 
-import           Control.Exception.Lens
-import           Control.Lens                         (view, ( # ), (&), (.~),
-                                                       (<&>))
-import           Control.Monad.Catch
-import           Control.Monad.Reader
-import           Credentials.Types
-import           Data.ByteString                      (ByteString)
-import           Data.ByteString.Builder              (Builder)
-import qualified Data.ByteString.Builder              as Build
-import qualified Data.ByteString.Char8                as BS8
+import           Control.Monad.IO.Class
+import           Credentials.Admin.Types
+import           Data.ByteString         (ByteString)
+import           Data.ByteString.Builder (Builder)
+import qualified Data.ByteString.Builder as Build
+import qualified Data.ByteString.Char8   as BS8
 import           Data.Char
-import           Data.Conduit                         (($$))
-import qualified Data.Conduit.List                    as CL
+import           Data.Conduit            (($$))
+import qualified Data.Conduit.List       as CL
 import           Data.Data
-import           Data.HashMap.Strict                  (HashMap)
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import qualified Data.List.NonEmpty                   as NE
-import           Data.Maybe
-import qualified Data.Text                            as Text
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Network.AWS.S3                       (BucketName,
-                                                       ObjectVersionId)
-import           Network.Credentials                  as Cred
-import           Numeric.Natural
-import           Options.Applicative
-import           Options.Applicative.Builder.Internal (HasCompleter)
+import           Data.Monoid
+import qualified Data.Text               as Text
+import           Network.AWS.Data.Log
 import           System.Exit
 import           System.IO
 
@@ -54,6 +39,7 @@ data Agree
     | No
     | What String
 
+quit :: ToLog a => Int -> a -> IO ()
 quit n m = err m >> exitWith (ExitFailure n)
 
 say :: (MonadIO m, ToLog a) => a -> m ()
