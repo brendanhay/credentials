@@ -2,6 +2,7 @@
 {-# LANGUAGE ExtendedDefaultRules       #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -25,8 +26,9 @@ import           Control.Lens                         (view, ( # ), (&), (.~),
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials                          as Cred
-import           Data.Aeson                           (ToJSON (..), encode,
-                                                       object, (.=))
+import           Data.Aeson                           (object, (.=))
+import           Data.Aeson.Encode                    (encodeToByteStringBuilder)
+import           Data.Aeson.Types                     (ToJSON (..))
 import qualified Data.Attoparsec.Text                 as A
 import           Data.Bifunctor
 import           Data.ByteString                      (ByteString)
@@ -124,30 +126,30 @@ instance ToText Store where
         Tbl t   -> "dynamo://" <> toText t
         Bkt b p -> "s3://"     <> toText b <> maybe mempty (mappend "/") p
 
-class Emitter a where
-    emit :: a -> Format -> ByteString
+data Output where
+    Output :: (ToLog a, ToJSON a) => Format -> a -> Output
 
-instance Emitter [(Name, NonEmpty Version)] where
-    emit ns = \case
-        JSON -> toBS (encode ns)
-        Echo -> toBS . mconcat . intersperse "\n" $ map name ns
+instance ToLog Output where
+    build (Output f x) =
+        case f of
+            Echo -> build x
+            JSON -> encodeToByteStringBuilder (toJSON x)
+
+instance ToLog [(Name, NonEmpty Version)] where
+    build = mconcat . intersperse "\n" . map name
+      where
+        name (toBS -> n, v :| vs) =
+               "name: " <> build n <> " -- version " <> build v <> " [latest]"
+            <> foldMap f vs
           where
-            name (toText -> n, v :| vs) =
-                   "name: " <> build n <> " -- version " <> build v <> " [latest]"
-                <> foldMap f vs
-              where
-                f x = pad <> " -- version " <> build x
-                pad = build $ Text.replicate (Text.length n + 6) " "
+            f x = pad <> " -- version " <> build x
+            pad = build $ BS8.replicate (BS8.length n + 6) ' '
 
 instance ToJSON [(Name, NonEmpty Version)] where
-    toJSON = object . map f
-      where
-        f (n, vs) = toText n .= map toText (toList vs)
+    toJSON = object . map (\(n, vs) -> toText n .= map toText (toList vs))
 
-instance Emitter (Name, (Value, Version)) where
-    emit e@(n, (x, v)) = \case
-        JSON -> toBS (encode e)
-        Echo -> toBS x <> "\n"
+instance ToLog (Name, (Value, Version)) where
+    build (_, (Value x, _)) = build x
 
 instance ToJSON (Name, (Value, Version)) where
     toJSON (n, (x, v)) = object

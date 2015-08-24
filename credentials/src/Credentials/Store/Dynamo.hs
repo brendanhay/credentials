@@ -34,7 +34,6 @@ import           Control.Lens            hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.Reader    (ask)
-import           Control.Monad.Trans.AWS (paginateWith)
 import           Control.Retry
 import           Credentials.Types
 import           Data.Bifunctor

@@ -8,6 +8,8 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeFamilies               #-}
 
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
+
 -- |
 -- Module      : Credentials.Admin.IO
 -- Copyright   : (c) 2013-2015 Brendan Hay
@@ -34,6 +36,8 @@ import           Network.AWS.Data.Log
 import           System.Exit
 import           System.IO
 
+default (Builder)
+
 data Agree
     = Yes
     | No
@@ -42,8 +46,11 @@ data Agree
 quit :: ToLog a => Int -> a -> IO ()
 quit n m = err m >> exitWith (ExitFailure n)
 
+sayLn :: (MonadIO m, ToLog a) => a -> m ()
+sayLn x = say (build x <> "\n")
+
 say :: (MonadIO m, ToLog a) => a -> m ()
-say x = liftIO $ Build.hPutBuilder stdout (build x <> "\n") >> hFlush stdout
+say x = liftIO $ Build.hPutBuilder stdout (build x) >> hFlush stdout
 
 err :: (MonadIO m, ToLog a) => a -> m ()
 err x = liftIO $ Build.hPutBuilder stderr ("Error! " <> build x <> "\n")

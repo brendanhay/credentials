@@ -77,35 +77,35 @@ main = do
 program :: Region -> Mode -> App ()
 program r = \case
     Setup s -> do
-        say $ "Setting up " <> build s <> " in " <> build r <> "."
+        sayLn $ "Setting up " <> build s <> " in " <> build r <> "."
         x <- Cred.setup s
-        say $ build s <> " " <> build x <> "."
+        sayLn $ build s <> " " <> build x <> "."
 
     Cleanup s f -> do
-        say $ "This will delete " <> build s <> " from " <> build r <> "!"
+        sayLn $ "This will delete " <> build s <> " from " <> build r <> "!"
         prompt f $ do
             Cred.cleanup s
-            say $ build s <> " deleted."
+            sayLn $ build s <> " deleted."
 
     List s f -> do
         xs <- list s
-        liftIO . BS.putStr $ emit xs f
+        say (Output f xs)
 
     Put s k c n i -> do
-        say $ "PUT " <> build n <> " to " <> build s <> "."
+        sayLn $ "PUT " <> build n <> " to " <> build s <> "."
 
         x <- case i of
             Raw  v -> pure v
             Path p -> do
-                say $ "Reading " <> build p <> "..."
+                sayLn $ "Reading " <> build p <> "..."
                 Value <$> liftIO (BS.readFile p)
 
         v <- Cred.put k c n x s
-        say $ "Wrote version " <> build v <> " of " <> build n <> "."
+        sayLn $ "Wrote version " <> build v <> " of " <> build n <> "."
 
     Get s c n v f -> do
         x <- Cred.get c n v s
-        liftIO . BS.putStr $ emit (n, x) f
+        say (Output f (n, x))
 
 data Mode
     = Setup     !Store

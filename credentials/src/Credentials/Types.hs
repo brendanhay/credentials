@@ -46,14 +46,14 @@ import           Numeric.Natural
 
 -- | The KMS master key identifier.
 newtype KeyId = KeyId Text
-    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
+    deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credential-store"
 
 -- | A shared/readable name for a secret.
 newtype Name = Name Text
-    deriving (Eq, Ord, Show, FromText, ToText, ToLog)
+    deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 -- | An unencrypted secret value.
 newtype Value = Value ByteString
@@ -64,7 +64,7 @@ instance Show Value where
 
 -- | An incrementing version number.
 newtype Version = Version Natural
-    deriving (Eq, Ord, Num, Show, FromText, ToText)
+    deriving (Eq, Ord, Num, Show, FromText, ToText, ToByteString)
 
 instance ToLog Version where
     build (Version n) = build (toInteger n)
