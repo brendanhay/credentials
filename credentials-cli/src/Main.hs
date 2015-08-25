@@ -74,6 +74,15 @@ main = do
         -- -- , hd 4 _Missing
         -- ]
 
+data Mode
+    = Setup     !Store
+    | Cleanup   !Store !Force
+    | List      !Store !Format
+    | Put       !Store !KeyId        !Context !Name !Input
+    | Get       !Store               !Context !Name !(Maybe Version) !Format
+    | Delete    !Store !Name         !Version !Force
+    | DeleteAll !Store !(Maybe Name) !Natural !Force
+
 program :: Region -> Mode -> App ()
 program r = \case
     Setup s -> do
@@ -107,14 +116,12 @@ program r = \case
         x <- Cred.get c n v s
         say (Output f (n, x))
 
-data Mode
-    = Setup     !Store
-    | Cleanup   !Store !Force
-    | List      !Store !Format
-    | Put       !Store !KeyId        !Context !Name !Input
-    | Get       !Store               !Context !Name !(Maybe Version) !Format
-    | Delete    !Store !Name         !Version !Force
-    | DeleteAll !Store !(Maybe Name) !Natural !Force
+    Delete s n v f -> do
+        sayLn $ mconcat
+            ["This will delete version ", build v, " of ", build n, " from ", build s, " in ", build r, "!"]
+        prompt f $ do
+            Cred.delete n v s
+            sayLn $ "Version " <> build v <> " of " <> build n <> "deleted."
 
 options :: ParserInfo (LogLevel, (Region, Mode))
 options = info (helper <*> ((,) <$> level <*> sub)) desc
@@ -192,8 +199,8 @@ store = option text
     <> help
         ("Protocol address for the storage system. \
          \(s3://<bucket>[/<prefix>] | dynamo://<table>) \
-         \[default: " ++ string (Tbl defaultTable) ++ "].")
-    <> value (Tbl defaultTable)
+         \[default: " ++ string defaultStore ++ "].")
+    <> value defaultStore
      )
 
 key :: Parser KeyId

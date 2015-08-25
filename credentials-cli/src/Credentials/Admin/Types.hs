@@ -67,7 +67,10 @@ instance ToText Format where
         Echo -> "echo"
 
 instance FromText Format where
-    parser = matchCI "json" JSON <|> matchCI "echo" Echo
+    parser = takeLowerText >>= \case
+        "json" -> pure JSON
+        "echo" -> pure Echo
+        e      -> fromTextError $ "Failure parsing format from: " <> e
 
 data Input
     = Raw  Value
@@ -82,49 +85,94 @@ instance MonadAWS App where
 instance Storage App where
     type Layer App = AWS
     data Ref   App
-        = Tbl (Ref Dynamo)
-        | Bkt BucketName (Maybe Text)
+        = Tbl (Maybe Host) (Ref Dynamo)
+        | Bkt (Maybe Host) BucketName (Maybe Text)
+          deriving (Show)
 
     layer = runApp
 
     setup = \case
-        Tbl t -> App (layer (setup t))
+        Tbl _ t -> App (layer (setup t))
 
     cleanup = \case
-        Tbl t -> wrap (cleanup t)
+        Tbl _ t -> wrap (cleanup t)
 
     list = \case
-        Tbl t -> wrap (list t)
+        Tbl _ t -> wrap (list t)
 
     insert n s = \case
-        Tbl t -> wrap (insert n s t)
+        Tbl _ t -> wrap (insert n s t)
 
     select n v = \case
-        Tbl t -> wrap (select n v t)
+        Tbl _ t -> wrap (select n v t)
+
+    delete n v = \case
+        Tbl _ t -> wrap (delete n v t)
+
+    deleteAll n = \case
+        Tbl _ t -> wrap (deleteAll n t)
 
 wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
 wrap = App . layer
 
 type Store = Ref App
 
-instance Show  Store where show  = Text.unpack . toText
-instance ToLog Store where build = build       . toText
+storageHost :: Store -> Maybe Host
+storageHost = \case
+    Tbl h _   -> h
+    Bkt h _ _ -> h
+
+defaultStore :: Store
+defaultStore = Tbl Nothing defaultTable
+
+instance ToLog Store where
+    build = build . toText
 
 instance FromText Store where
-    parser = do
-        p <- A.takeWhile1 (/= ':') >> A.string "//"
-        case p of
-            "dynamo" -> Tbl <$> parser
-            "s3"     -> Bkt <$> bucket <*> prefix
-            _        -> fail $ "Unrecognised protocol '" ++ Text.unpack p ++ "'"
+    parser = (parser <* A.string scheme) >>= \case
+        Dynamo -> Tbl <$> host <*> parser
+        S3     -> Bkt <$> host <*> bucket <*> prefix
       where
-        bucket = BucketName <$> A.takeWhile1 (/= '/') <* A.char '/'
-        prefix = optional takeText
+        host   = optional (parser <* A.char '/')
+        bucket = BucketName <$> A.takeWhile1 (A.notInClass ":/")
+        prefix = optional (A.char '/' *> takeText)
 
 instance ToText Store where
     toText = \case
-        Tbl t   -> "dynamo://" <> toText t
-        Bkt b p -> "s3://"     <> toText b <> maybe mempty (mappend "/") p
+        Tbl h t   -> toText Dynamo <> scheme <> host h <> toText t
+        Bkt h b p -> toText S3     <> scheme <> host h <> toText b <> prefix p
+      where
+        host   = maybe mempty ((<> "/") . toText)
+        prefix = maybe mempty (mappend "/")
+
+scheme :: Text
+scheme = "://"
+
+data Protocol
+    = Dynamo
+    | S3
+      deriving (Eq, Show)
+
+instance FromText Protocol where
+    parser = (A.asciiCI "dynamo" >> pure Dynamo)
+         <|> (A.asciiCI "s3"     >> pure S3)
+
+instance ToText Protocol where
+    toText = \case
+        Dynamo -> "dynamo"
+        S3     -> "s3"
+
+data Host = Host !Bool !ByteString !Int
+    deriving (Eq, Show)
+
+instance FromText Host where
+    parser = do
+        h <- A.takeWhile1 (/= ':') <* A.char ':'
+        p <- A.decimal
+        return $! Host (p == 443) (toBS h) p
+
+instance ToText Host where
+    toText (Host _ h p) = toText h <> ":" <> toText p
 
 data Output where
     Output :: (ToLog a, ToJSON a) => Format -> a -> Output
