@@ -27,7 +27,7 @@ import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials                          as Cred
 import           Data.Aeson                           (object, (.=))
-import           Data.Aeson.Encode                    (encodeToByteStringBuilder)
+import           Data.Aeson.Encode.Pretty             (encodePretty)
 import           Data.Aeson.Types                     (ToJSON (..))
 import qualified Data.Attoparsec.Text                 as A
 import           Data.Bifunctor
@@ -49,12 +49,36 @@ import           GHC.Exts                             (toList)
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
+import           Network.AWS.DynamoDB                 (dynamoDB)
 import           Network.AWS.S3                       (BucketName (..),
-                                                       ObjectVersionId)
+                                                       ObjectVersionId, s3)
+import           Numeric.Natural
 import           Options.Applicative
 import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
+
+(%) :: ToLog a => Builder -> a -> Builder
+b % x = b <> build x
+
+data Mode
+    = Setup     !Store
+    | Cleanup   !Store !Force
+    | List      !Store !Format
+    | Put       !Store !KeyId        !Context !Name !Input
+    | Get       !Store               !Context !Name !(Maybe Version) !Format
+    | Delete    !Store !Name         !Version !Force
+    | DeleteAll !Store !(Maybe Name) !Natural !Force
+
+current :: Mode -> Store
+current = \case
+    Setup     s         -> s
+    Cleanup   s _       -> s
+    List      s _       -> s
+    Put       s _ _ _ _ -> s
+    Get       s _ _ _ _ -> s
+    Delete    s _ _ _   -> s
+    DeleteAll s _ _ _   -> s
 
 data Force = NoPrompt | Prompt
 
@@ -117,13 +141,16 @@ wrap = App . layer
 
 type Store = Ref App
 
-storageHost :: Store -> Maybe Host
-storageHost = \case
-    Tbl h _   -> h
-    Bkt h _ _ -> h
+storeEndpoint :: HasEnv a => Store -> a -> a
+storeEndpoint = configure . \case
+    Tbl h _   -> host h dynamoDB
+    Bkt h _ _ -> host h s3
+  where
+    host (Just (Host s h p)) = setEndpoint s h p
+    host _                   = id
 
-defaultStore :: Store
-defaultStore = Tbl Nothing defaultTable
+storeDefault :: Store
+storeDefault = Tbl (Just (Host False "localhost" 8000)) defaultTable
 
 instance ToLog Store where
     build = build . toText
@@ -181,17 +208,16 @@ instance ToLog Output where
     build (Output f x) =
         case f of
             Echo -> build x
-            JSON -> encodeToByteStringBuilder (toJSON x)
+            JSON -> build (encodePretty x) <> "\n"
 
 instance ToLog [(Name, NonEmpty Version)] where
-    build = mconcat . intersperse "\n" . map name
+    build = foldMap name
       where
         name (toBS -> n, v :| vs) =
-               "name: " <> build n <> " -- version " <> build v <> " [latest]"
-            <> foldMap f vs
+            "name: " % n % " -- version " % v % " [latest]\n" <> foldMap f vs
           where
-            f x = pad <> " -- version " <> build x
-            pad = build $ BS8.replicate (BS8.length n + 6) ' '
+            f x = pad % " -- version " % x % "\n"
+            pad = build (BS8.replicate (BS8.length n + 6) ' ')
 
 instance ToJSON [(Name, NonEmpty Version)] where
     toJSON = object . map (\(n, vs) -> toText n .= map toText (toList vs))

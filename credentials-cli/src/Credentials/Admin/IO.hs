@@ -46,8 +46,8 @@ data Agree
 quit :: ToLog a => Int -> a -> IO ()
 quit n m = err m >> exitWith (ExitFailure n)
 
-sayLn :: (MonadIO m, ToLog a) => a -> m ()
-sayLn x = say (build x <> "\n")
+says :: (MonadIO m, ToLog a) => a -> m ()
+says x = say (build x <> "\n")
 
 say :: (MonadIO m, ToLog a) => a -> m ()
 say x = liftIO $ Build.hPutBuilder stdout (build x) >> hFlush stdout
@@ -56,14 +56,14 @@ err :: (MonadIO m, ToLog a) => a -> m ()
 err x = liftIO $ Build.hPutBuilder stderr ("Error! " <> build x <> "\n")
 
 prompt :: MonadIO m => Force -> m () -> m ()
-prompt NoPrompt io = say "Running ..." >> io
+prompt NoPrompt io = says "Running ..." >> io
 prompt Prompt   io = do
-    liftIO $ hPutStr stdout " -> Proceed? [y/n]: " >> hFlush stdout
+    say " -> Proceed? [y/n]: "
     a <- agree
     case a of
-        Yes    -> say "Running ..." >> io
-        No     -> say "Cancelling ..."
-        What w -> say $ build w <> ", what? Cancelling ..."
+        Yes    -> says "Running ..." >> io
+        No     -> says "Cancelling ..."
+        What w -> says $ build w <> ", what? Cancelling ..."
 
 agree :: MonadIO m => m Agree
 agree = do

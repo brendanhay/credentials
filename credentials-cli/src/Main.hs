@@ -63,9 +63,10 @@ main = do
         customExecParser (prefs (showHelpOnError <> columns 100)) options
 
     l <- newLogger v stdout
-    e <- newEnv r Discover <&> envLogger .~ l
+    e <- newEnv r Discover <&> (envLogger .~ l) . storeEndpoint (current m)
 
     runResourceT . runAWS e . runApp $ program r m
+
 --    catches (runResourceT . runAWS e . runApp $ program r m)
         -- [ handler _NotSetup $ \s ->
         --     quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
@@ -74,54 +75,43 @@ main = do
         -- -- , hd 4 _Missing
         -- ]
 
-data Mode
-    = Setup     !Store
-    | Cleanup   !Store !Force
-    | List      !Store !Format
-    | Put       !Store !KeyId        !Context !Name !Input
-    | Get       !Store               !Context !Name !(Maybe Version) !Format
-    | Delete    !Store !Name         !Version !Force
-    | DeleteAll !Store !(Maybe Name) !Natural !Force
-
 program :: Region -> Mode -> App ()
 program r = \case
     Setup s -> do
-        sayLn $ "Setting up " <> build s <> " in " <> build r <> "."
+        says ("Setting up " % s <> " in " % r <> ".")
         x <- Cred.setup s
-        sayLn $ build s <> " " <> build x <> "."
+        says $ "Created " % s % " " % x % "."
 
     Cleanup s f -> do
-        sayLn $ "This will delete " <> build s <> " from " <> build r <> "!"
+        says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
             Cred.cleanup s
-            sayLn $ build s <> " deleted."
+            says ("Deleted " % s % ".")
 
     List s f -> do
         xs <- list s
         say (Output f xs)
 
     Put s k c n i -> do
-        sayLn $ "PUT " <> build n <> " to " <> build s <> "."
-
+        says ("Put " % n % " to " % s % ".")
         x <- case i of
             Raw  v -> pure v
             Path p -> do
-                sayLn $ "Reading " <> build p <> "..."
+                says ("Reading " % p % "...")
                 Value <$> liftIO (BS.readFile p)
 
         v <- Cred.put k c n x s
-        sayLn $ "Wrote version " <> build v <> " of " <> build n <> "."
+        says ("Wrote version " % v % " of " % n % ".")
 
     Get s c n v f -> do
         x <- Cred.get c n v s
         say (Output f (n, x))
 
     Delete s n v f -> do
-        sayLn $ mconcat
-            ["This will delete version ", build v, " of ", build n, " from ", build s, " in ", build r, "!"]
+        says ("This will delete version " % v % " of " % n % " from " % s % " in " % r % "!")
         prompt f $ do
             Cred.delete n v s
-            sayLn $ "Version " <> build v <> " of " <> build n <> "deleted."
+            says ("Deleted version " % v % " of " % n % ".")
 
 options :: ParserInfo (LogLevel, (Region, Mode))
 options = info (helper <*> ((,) <$> level <*> sub)) desc
@@ -193,14 +183,13 @@ level = option (eitherReader r)
 
 store :: Parser Store
 store = option text
-     ( short 's'
-    <> long "store"
-    <> metavar "ADDRESS"
+     ( long "store"
+    <> metavar "URI"
     <> help
         ("Protocol address for the storage system. \
          \(s3://<bucket>[/<prefix>] | dynamo://<table>) \
-         \[default: " ++ string defaultStore ++ "].")
-    <> value defaultStore
+         \[default: " ++ string storeDefault ++ "].")
+    <> value storeDefault
      )
 
 key :: Parser KeyId
@@ -243,7 +232,8 @@ force = flag Prompt NoPrompt
 
 format :: Parser Format
 format = option text
-     ( long "format"
+     ( short 'o'
+    <> long "format"
     <> metavar "FORMAT"
     <> help "Output format. (json|echo) [default: echo]"
     <> value Echo
@@ -264,14 +254,16 @@ input = textual <|> filepath
   where
     textual = Raw
         <$> option text
-             ( long "secret"
+             ( short 's'
+            <> long "secret"
             <> metavar "STRING"
             <> help "The raw unencrypted value of the credential."
              )
 
     filepath = Path
         <$> option str
-             ( long "path"
+             ( short 'p'
+            <> long "path"
             <> metavar "PATH"
             <> help "A path to read as the raw unencrypted value of the credential."
             <> action "file"
