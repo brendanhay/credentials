@@ -152,7 +152,7 @@ mode :: String -> Parser a -> String -> Mod CommandFields a
 mode m p h = command m . info p $ fullDesc <> progDesc h <> header about
 
 about :: String
-about = "credentials - CLIistration CLI for credential and secret storage."
+about = "credentials - Administration CLI for credential and secret storage."
 
 region :: Parser Region
 region = option text

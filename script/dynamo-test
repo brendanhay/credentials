@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -e
+
+store="$1"
+key="$2"
+
+if [ -z "$store" -o -z "$key" ]; then
+    echo "Usage: run <STORE> <KEY>"
+    exit 1
+fi
+
+region="eu-central-1"
+
+send() {
+    local mode="$1"
+    local args="$2"
+
+    credentials -r $region $mode --store $store $args
+}
+
+gets() {
+    local name="$1"
+    local expect="$2"
+    local context="$3"
+
+    local actual="$(credentials -r $region get --store $store -n $name $context)"
+
+    if [ "$expect" != "$actual" ]; then
+        send "list"
+        echo "Test failed for $name, expect: $expect, actual: $actual"
+        exit 1
+    fi
+}
+
+puts() {
+    local name="$1"
+    local secret="$2"
+    local context="$3"
+
+    credentials -r $region -l debug put --store $store -k $key -n $name -s "$secret" $context
+    gets "$name" "$secret" "$context"
+}
+
+send "cleanup" "-f"
+send "setup"
+
+puts "foo" "secret"
+puts "foo" "not so secret"
+puts "foo" "something"
+puts "foo" "bother"
+
+send "delete" "-n foo -v 3 -f"
+gets "foo" "bother"
+
+send "delete" "-n foo -v 4 -f"
+gets "foo" "not so secret"
+
+puts "bar" "longer secret" "-c a=b -c this=notthis"
+
+send "list"
+
+echo "Done."

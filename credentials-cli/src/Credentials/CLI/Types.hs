@@ -122,32 +122,32 @@ instance MonadAWS App where
 instance Storage App where
     type Layer App = AWS
     data Ref   App
-        = Tbl (Maybe Host) (Ref DynamoDB)
-        | Bkt (Maybe Host) BucketName (Maybe Text)
+        = Table  (Maybe Host) (Ref DynamoDB)
+        | Bucket (Maybe Host) BucketName (Maybe Text)
           deriving (Show)
 
     layer = unApp
 
     setup = \case
-        Tbl _ t -> wrap (setup t)
+        Table _ t -> wrap (setup t)
 
     cleanup = \case
-        Tbl _ t -> wrap (cleanup t)
+        Table _ t -> wrap (cleanup t)
 
     list = \case
-        Tbl _ t -> wrap (list t)
+        Table _ t -> wrap (list t)
 
     insert n s = \case
-        Tbl _ t -> wrap (insert n s t)
+        Table _ t -> wrap (insert n s t)
 
     select n v = \case
-        Tbl _ t -> wrap (select n v t)
+        Table _ t -> wrap (select n v t)
 
     delete n v = \case
-        Tbl _ t -> wrap (delete n v t)
+        Table _ t -> wrap (delete n v t)
 
     deleteAll n = \case
-        Tbl _ t -> wrap (deleteAll n t)
+        Table _ t -> wrap (deleteAll n t)
 
 wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
 wrap = App . layer
@@ -157,24 +157,16 @@ runApp e = runResourceT . runAWS e . unApp
 
 type Store = Ref App
 
-storeEndpoint :: HasEnv a => Store -> a -> a
-storeEndpoint = configure . \case
-    Tbl h _   -> host h dynamoDB
-    Bkt h _ _ -> host h s3
-  where
-    host (Just (Host s h p)) = setEndpoint s h p
-    host _                   = id
-
 defaultStore :: Store
-defaultStore = Tbl (Just (Host False "localhost" 8000)) defaultTable
+defaultStore = Table (Just (Host False "localhost" 8000)) defaultTable
 
 instance ToLog Store where
     build = build . toText
 
 instance FromText Store where
     parser = (parser <* A.string scheme) >>= \case
-        Dynamo -> Tbl <$> host <*> parser
-        S3     -> Bkt <$> host <*> bucket <*> prefix
+        Dynamo -> Table <$> host <*> parser
+        S3     -> Bucket <$> host <*> bucket <*> prefix
       where
         host   = optional (parser <* A.char '/')
         bucket = BucketName <$> A.takeWhile1 (A.notInClass ":/")
@@ -182,11 +174,19 @@ instance FromText Store where
 
 instance ToText Store where
     toText = \case
-        Tbl h t   -> toText Dynamo <> scheme <> host h <> toText t
-        Bkt h b p -> toText S3     <> scheme <> host h <> toText b <> prefix p
+        Table  h t   -> toText Dynamo <> scheme <> host h <> toText t
+        Bucket h b p -> toText S3     <> scheme <> host h <> toText b <> prefix p
       where
         host   = maybe mempty ((<> "/") . toText)
         prefix = maybe mempty (mappend "/")
+
+storeEndpoint :: HasEnv a => Store -> a -> a
+storeEndpoint = configure . \case
+    Table  h _   -> host h dynamoDB
+    Bucket h _ _ -> host h s3
+  where
+    host (Just (Host s h p)) = setEndpoint s h p
+    host _                   = id
 
 scheme :: Text
 scheme = "://"
