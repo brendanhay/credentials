@@ -1,8 +1,5 @@
 # Credentials
 
-[![Build Status](https://travis-ci.org/brendanhay/credentials.svg?branch=develop)](https://travis-ci.org/brendanhay/credentials)
-[![Hackage Version](https://img.shields.io/hackage/v/credentials.svg)](http://hackage.haskell.org/package/credentials)
-
 * [Description](#description)
 * [Usage](#usage)
 * [Contribute](#contribute)

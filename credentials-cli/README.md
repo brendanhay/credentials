@@ -1,7 +1,4 @@
-# Credentials
-
-[![Build Status](https://travis-ci.org/brendanhay/credentials.svg?branch=develop)](https://travis-ci.org/brendanhay/credentials)
-[![Hackage Version](https://img.shields.io/hackage/v/credentials.svg)](http://hackage.haskell.org/package/credentials)
+# Credentials CLI
 
 * [Description](#description)
 * [Usage](#usage)
@@ -26,4 +23,4 @@ For any problems, comments, or feedback please create an issue [here on GitHub](
 
 ## Licence
 
-Credentials is released under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+credentials-cli is released under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
