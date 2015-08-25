@@ -12,7 +12,7 @@
 
 -- |
 -- Module      : Credentials.CLI.Types
--- Copyright   : (c) 2013-2015 Brendan Hay
+-- Copyright   : (c) 2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
@@ -122,7 +122,7 @@ instance MonadAWS App where
 instance Storage App where
     type Layer App = AWS
     data Ref   App
-        = Tbl (Maybe Host) (Ref Dynamo)
+        = Tbl (Maybe Host) (Ref DynamoDB)
         | Bkt (Maybe Host) BucketName (Maybe Text)
           deriving (Show)
 
@@ -165,8 +165,8 @@ storeEndpoint = configure . \case
     host (Just (Host s h p)) = setEndpoint s h p
     host _                   = id
 
-storeDefault :: Store
-storeDefault = Tbl (Just (Host False "localhost" 8000)) defaultTable
+defaultStore :: Store
+defaultStore = Tbl (Just (Host False "localhost" 8000)) defaultTable
 
 instance ToLog Store where
     build = build . toText

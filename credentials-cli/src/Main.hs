@@ -12,7 +12,7 @@
 
 -- |
 -- Module      : Main
--- Copyright   : (c) 2013-2015 Brendan Hay
+-- Copyright   : (c) 2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
@@ -186,8 +186,8 @@ store = option text
     <> metavar "URI"
     <> help
         ("Protocol URI for the storage system. (proto://[address:port/]storage-ref) \
-         \[default: " ++ string storeDefault ++ "].")
-    <> value storeDefault
+         \[default: " ++ string defaultStore ++ "].")
+    <> value defaultStore
      )
 
 key :: Parser KeyId

@@ -1,66 +1,58 @@
-{-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Credentials.DynamoDB
--- Copyright   : (c) 2013-2015 Brendan Hay
+-- Copyright   : (c) 2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
 module Credentials.DynamoDB
-    ( Dynamo
-    , Table
+    ( DynamoDB
+    , TableName
     , defaultTable
     ) where
 
 import           Control.Exception.Lens
-import           Control.Lens           hiding (Context)
+import           Control.Lens             hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Retry
 import           Credentials
-import           Data.ByteString        (ByteString)
-import           Data.Conduit           hiding (await)
-import qualified Data.Conduit           as C
-import qualified Data.Conduit.List      as CL
-import           Data.HashMap.Strict    (HashMap)
-import qualified Data.HashMap.Strict    as Map
-import           Data.List.NonEmpty     (NonEmpty (..))
-import qualified Data.List.NonEmpty     as NE
+import           Credentials.DynamoDB.Val
+import           Data.Conduit             hiding (await)
+import qualified Data.Conduit             as C
+import qualified Data.Conduit.List        as CL
+import qualified Data.HashMap.Strict      as Map
+import           Data.List.NonEmpty       (NonEmpty (..))
+import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Ord
-import           Data.Proxy
-import           Data.Text              (Text)
-import qualified Data.Text              as Text
+import           Data.Text                (Text)
 import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.DynamoDB
 
-newtype Dynamo a = Dynamo { runDynamo :: AWS a }
+newtype DynamoDB a = DynamoDB { runDynamo :: AWS a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
 
-instance MonadAWS Dynamo where
-    liftAWS = Dynamo
+instance MonadAWS DynamoDB where
+    liftAWS = DynamoDB
 
-instance Storage Dynamo where
-    type  Layer Dynamo = AWS
-    newtype Ref Dynamo = Table Text
+instance Storage DynamoDB where
+    type  Layer DynamoDB = AWS
+    newtype Ref DynamoDB = TableName Text
         deriving (Eq, Ord, Show, FromText, ToText, ToLog)
 
     layer     = runDynamo
@@ -72,12 +64,12 @@ instance Storage Dynamo where
     delete    = delete'
 --    deleteAll = deleteAll
 
-type Table = Ref Dynamo
+type TableName = Ref DynamoDB
 
-defaultTable :: Table
-defaultTable = Table "credential-store"
+defaultTable :: TableName
+defaultTable = TableName "credential-store"
 
-setup' :: MonadAWS m => Table -> m Setup
+setup' :: MonadAWS m => TableName -> m Setup
 setup' t@(toText -> t') = do
     p <- exists t
     unless p $ do
@@ -92,7 +84,7 @@ setup' t@(toText -> t') = do
         void $ await tableExists (describeTable t')
     return $ if p then Exists else Created
 
-cleanup' :: MonadAWS m => Table -> m ()
+cleanup' :: MonadAWS m => TableName -> m ()
 cleanup' t@(toText -> t') = do
     p <- exists t
     when p $ do
@@ -100,7 +92,7 @@ cleanup' t@(toText -> t') = do
         void $ await tableNotExists (describeTable t')
 
 list' :: (MonadCatch m, MonadAWS m)
-      => Table
+      => TableName
       -> m [(Name, NonEmpty Version)]
 list' t =
     paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
@@ -119,7 +111,7 @@ list' t =
 insert' :: (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
         => Name
         -> Secret
-        -> Table
+        -> TableName
         -> m Version
 insert' n s t = recovering policy [const cond] write
   where
@@ -140,7 +132,7 @@ insert' n s t = recovering policy [const cond] write
 select' :: (MonadThrow m, MonadAWS m)
         => Name
         -> Maybe Version
-        -> Table
+        -> TableName
         -> m (Secret, Version)
 select' n v t = send (named n t & version v) >>= result
   where
@@ -153,14 +145,14 @@ select' n v t = send (named n t & version v) >>= result
 delete' :: MonadAWS m
         => Name
         -> Version
-        -> Table
+        -> TableName
         -> m ()
 delete' n v t = void . send $
     deleteItem (toText t) & diKey .~ toVal n <> toVal v
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
-       -> Table
+       -> TableName
        -> m (Maybe Version)
 latest n t = do
     rs <- send (named n t)
@@ -168,92 +160,17 @@ latest n t = do
         Nothing -> pure Nothing
         Just  m -> Just <$> fromVal m
 
-exists :: MonadAWS m => Table -> m Bool
+exists :: MonadAWS m => TableName -> m Bool
 exists t = paginate listTables
     =$= CL.concatMap (view ltrsTableNames)
      $$ (isJust <$> findC (== toText t))
 
-named :: Name -> Table -> Query
+named :: Name -> TableName -> Query
 named n t = query (toText t)
     & qLimit            ?~ 1
     & qScanIndexForward ?~ False
     & qConsistentRead   ?~ True
     & qKeyConditions    .~ equals n
-
-equals :: Val a => a -> HashMap Text Condition
-equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toVal
-
-nameField, versionField :: Text
-nameField    = name (Proxy :: Proxy Name)
-versionField = name (Proxy :: Proxy Version)
-
-class Val a where
-    toVal   :: a -> HashMap Text AttributeValue
-    fromVal :: MonadThrow m => HashMap Text AttributeValue -> m a
-
-    default toVal :: IsField a b => a -> HashMap Text AttributeValue
-    toVal = toField
-
-    default fromVal :: (MonadThrow m, Monoid b, ToText b, IsField a b)
-                    => HashMap Text AttributeValue
-                    -> m a
-    fromVal = fromField
-
-instance (Val a, Val b) => Val (a, b) where
-    toVal (x, y) = toVal x <> toVal y
-    fromVal m    = (,) <$> fromVal m <*> fromVal m
-
-instance Val Secret where
-    toVal (Secret k h c) = toVal k <> toVal h <> toVal c
-    fromVal m = Secret <$> fromVal m <*> fromVal m <*> fromVal m
-
-instance Val Name
-instance Val Version
-instance Val Key
-instance Val Cipher
-instance Val HMAC256
-
-class IsField a b | a -> b where
-    field :: Field a b
-
-instance IsField Name    Text       where field = Field "name"     avS text
-instance IsField Version Text       where field = Field "version"  avN text
-instance IsField Key     ByteString where field = Field "key"      avB (bytes Key)
-instance IsField Cipher  ByteString where field = Field "contents" avB (bytes Cipher)
-instance IsField HMAC256 ByteString where field = Field "hmac"     avB (bytes Hex)
-
-data Field a b = Field Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
-
-toField :: IsField a b => a -> HashMap Text AttributeValue
-toField x = let Field k l p = field in [(k, attributeValue & l ?~ review p x)]
-
-fromField :: (MonadThrow m, Monoid b, ToText b, IsField a b)
-          => HashMap Text AttributeValue
-          -> m a
-fromField m = require >>= parse
-  where
-    Field k l p = field
-
-    require = maybe missing pure (Map.lookup k m)
-
-    parse (attr -> x) = maybe (invalid x) pure (preview p x)
-
-    attr = fromMaybe mempty . view l
-
-    missing = throwM (FieldMissing k (Map.keys m))
-    invalid = throwM . FieldInvalid k . toText
-
-name :: forall a b. IsField a b => Proxy a -> Text
-name _ = let (Field k _ _) = field :: Field a b in k
-
-text :: (FromText a, ToText a) => Prism' Text a
-text = prism' toText go
-  where
-    go x | Text.null x = Nothing
-         | otherwise   = either (const Nothing) Just (fromText x)
-
-bytes :: ToByteString a => (ByteString -> a) -> Prism' ByteString a
-bytes w = prism' toBS (Just . w)
 
 findC :: Monad m => (a -> Bool) -> Consumer a m (Maybe a)
 findC f = loop
