@@ -114,11 +114,8 @@ program r = \case
             says ("Deleted version " % v % " of " % n % ".")
 
 options :: ParserInfo (LogLevel, (Region, Mode))
-options = info (helper <*> ((,) <$> level <*> sub)) desc
+options = info (helper <*> ((,) <$> level <*> sub)) (fullDesc <> header about)
   where
-    desc = fullDesc
-        <> progDesc "Administration CLI for credential and secret storage."
-
     sub = subparser $ mconcat
         [ mode "setup"
             (Setup <$> store)
@@ -154,7 +151,11 @@ options = info (helper <*> ((,) <$> level <*> sub)) desc
         ]
 
 mode :: String -> Parser a -> String -> Mod CommandFields (Region, a)
-mode m p h = command m $ info ((,) <$> region <*> p) (progDesc h)
+mode m p h = command m . info ((,) <$> region <*> p) $
+    fullDesc <> progDesc h <> header about
+
+about :: String
+about = "credentials - Administration CLI for credential and secret storage."
 
 region :: Parser Region
 region = option text
@@ -204,7 +205,12 @@ key = option text
     )
 
 context :: Parser Context
-context = pure (Context mempty)
+context = toContext $ option text
+    ( short 'c'
+   <> long "context"
+   <> metavar "KEY=VALUE"
+   <> help "A key/value pair to add to the encryption context."
+    )
 
 name :: Parser Name
 name = option text

@@ -41,6 +41,7 @@ import qualified Data.Conduit.List                    as CL
 import           Data.Data
 import           Data.Foldable                        (foldMap)
 import           Data.HashMap.Strict                  (HashMap)
+import qualified Data.HashMap.Strict                  as Map
 import           Data.List                            (intersperse)
 import           Data.List.NonEmpty                   (NonEmpty (..))
 import           Data.Maybe
@@ -99,6 +100,17 @@ instance FromText Format where
 data Input
     = Raw  Value
     | Path FilePath
+
+data Pair = Pair Text Text
+
+instance FromText Pair where
+    parser = Pair <$> key <*> val
+      where
+        key = A.skipSpace *> A.takeWhile1 (/= '=')
+        val = A.char '='  *> A.takeText
+
+toContext :: Alternative f => f Pair -> f Context
+toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 
 newtype App a = App { runApp :: AWS a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
