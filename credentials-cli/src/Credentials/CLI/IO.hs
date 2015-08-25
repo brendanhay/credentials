@@ -11,17 +11,17 @@
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 -- |
--- Module      : Credentials.Admin.IO
+-- Module      : Credentials.CLI.IO
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.Admin.IO where
+module Credentials.CLI.IO where
 
 import           Control.Monad.IO.Class
-import           Credentials.Admin.Types
+import           Credentials.CLI.Types
 import           Data.ByteString         (ByteString)
 import           Data.ByteString.Builder (Builder)
 import qualified Data.ByteString.Builder as Build

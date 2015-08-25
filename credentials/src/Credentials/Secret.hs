@@ -19,7 +19,6 @@ module Credentials.Secret
     , Credentials.Secret.decrypt
     ) where
 
-import           Conduit                 hiding (await)
 import           Control.Exception.Lens
 import           Control.Lens            hiding (Context)
 import           Control.Monad
@@ -78,8 +77,8 @@ decrypt :: (MonadThrow m, MonadAWS m)
         -> Secret
         -> m Value
 decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
-    e  <- trying _InvalidCiphertextException . send $
-        KMS.decrypt key & dEncryptionContext .~ context c
+    e  <- trying _InvalidCiphertextException .
+        send $ KMS.decrypt key & dEncryptionContext .~ context c
 
     rs <- case e of
         Left _ | blank c ->
@@ -126,4 +125,3 @@ splitKey = BS.splitAt 32
 
 bytes :: Natural
 bytes = 64
-

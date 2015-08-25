@@ -131,7 +131,7 @@ insert' n s t = recovering policy [const cond] write
             & piExpected .~ Map.map (const expect) x
         return v
 
-    cond   = handler_ _ConditionalCheckFailedException $ return True
+    cond = handler_ _ConditionalCheckFailedException (return True)
 
     expect = expectedAttributeValue & eavExists ?~ False
 

@@ -26,9 +26,9 @@ import           Control.Lens                         (view, ( # ), (&), (.~),
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
-import           Credentials                          as Cred hiding (context)
-import           Credentials.Admin.IO
-import           Credentials.Admin.Types
+import           Credentials                          as Store hiding (context)
+import           Credentials.CLI.IO
+import           Credentials.CLI.Types
 import           Data.ByteString                      (ByteString)
 import qualified Data.ByteString                      as BS
 import           Data.ByteString.Builder              (Builder)
@@ -59,33 +59,26 @@ default (Builder)
 
 main :: IO ()
 main = do
-    (v, (r, m)) <-
-        customExecParser (prefs (showHelpOnError <> columns 100)) options
+    (r, v, m) <- customExecParser settings options
 
     l <- newLogger v stdout
     e <- newEnv r Discover <&> (envLogger .~ l) . storeEndpoint (current m)
 
-    runResourceT . runAWS e . runApp $ program r m
-
---    catches (runResourceT . runAWS e . runApp $ program r m)
-        -- [ handler _NotSetup $ \s ->
-        --     quit 2 ("Credential store " <> build s <> " doesn't exist. Please run setup.")
-
-        -- -- , hd 3 _Invalid
-        -- -- , hd 4 _Missing
-        -- ]
+    catches (runApp e (program r m))
+        [ handler _CredentialError $ \x -> quit 1 (show x)
+        ]
 
 program :: Region -> Mode -> App ()
 program r = \case
     Setup s -> do
         says ("Setting up " % s <> " in " % r <> ".")
-        x <- Cred.setup s
+        x <- Store.setup s
         says $ "Created " % s % " " % x % "."
 
     Cleanup s f -> do
         says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
-            Cred.cleanup s
+            Store.cleanup s
             says ("Deleted " % s % ".")
 
     List s f -> do
@@ -97,26 +90,29 @@ program r = \case
         x <- case i of
             Raw  v -> pure v
             Path p -> do
-                says ("Reading " % p % "...")
+                says ("Reading secret from " % p % "...")
                 Value <$> liftIO (BS.readFile p)
 
-        v <- Cred.put k c n x s
+        v <- Store.put k c n x s
         says ("Wrote version " % v % " of " % n % ".")
 
     Get s c n v f -> do
-        x <- Cred.get c n v s
+        x <- Store.get c n v s
         say (Output f (n, x))
 
     Delete s n v f -> do
         says ("This will delete version " % v % " of " % n % " from " % s % " in " % r % "!")
         prompt f $ do
-            Cred.delete n v s
+            Store.delete n v s
             says ("Deleted version " % v % " of " % n % ".")
 
-options :: ParserInfo (LogLevel, (Region, Mode))
-options = info (helper <*> ((,) <$> level <*> sub)) (fullDesc <> header about)
+settings :: ParserPrefs
+settings = prefs (showHelpOnError <> columns 100)
+
+options :: ParserInfo (Region, LogLevel, Mode)
+options = info (helper <*> liftA3 (,,) region level modes) (fullDesc <> header about)
   where
-    sub = subparser $ mconcat
+    modes = subparser $ mconcat
         [ mode "setup"
             (Setup <$> store)
             "Setup a new credential store."
@@ -137,7 +133,9 @@ options = info (helper <*> ((,) <$> level <*> sub)) (fullDesc <> header about)
 
         , mode "put"
             (Put <$> store <*> key <*> context <*> name <*> input)
-            "Write and encrypt a new version of a credential to the store."
+            "Write and encrypt a new version of a credential to the store. \
+            \You can supply the secret as a string with --secret, or as \
+            \a file path to the secret's contents using --path."
 
         , mode "delete"
             (Delete <$> store <*> name <*> version <*> force)
@@ -150,19 +148,19 @@ options = info (helper <*> ((,) <$> level <*> sub)) (fullDesc <> header about)
             \credentials."
         ]
 
-mode :: String -> Parser a -> String -> Mod CommandFields (Region, a)
-mode m p h = command m . info ((,) <$> region <*> p) $
-    fullDesc <> progDesc h <> header about
+mode :: String -> Parser a -> String -> Mod CommandFields a
+mode m p h = command m . info p $ fullDesc <> progDesc h <> header about
 
 about :: String
-about = "credentials - Administration CLI for credential and secret storage."
+about = "credentials - CLIistration CLI for credential and secret storage."
 
 region :: Parser Region
 region = option text
      ( short 'r'
     <> long "region"
     <> metavar "REGION"
-    <> help "The AWS Region in which to operate."
+    <> help "The AWS Region in which to operate. [default: eu-central-1]"
+    <> value Frankfurt
     <> complete
      )
 
@@ -187,8 +185,7 @@ store = option text
      ( long "store"
     <> metavar "URI"
     <> help
-        ("Protocol address for the storage system. \
-         \(s3://<bucket>[/<prefix>] | dynamo://<table>) \
+        ("Protocol URI for the storage system. (proto://[address:port/]storage-ref) \
          \[default: " ++ string storeDefault ++ "].")
     <> value storeDefault
      )
@@ -226,7 +223,7 @@ version = option text
     <> long "version"
     <> metavar "NUMBER"
     <> help "A specific credential version."
-    <> completeWith ["1", "2"]
+    <> completeWith (map show ([1..9] :: [Int]))
      )
 
 force :: Parser Force

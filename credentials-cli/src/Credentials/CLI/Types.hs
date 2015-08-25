@@ -11,14 +11,14 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 -- |
--- Module      : Credentials.Admin.Types
+-- Module      : Credentials.CLI.Types
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.Admin.Types where
+module Credentials.CLI.Types where
 
 import           Control.Exception.Lens
 import           Control.Lens                         (view, ( # ), (&), (.~),
@@ -26,6 +26,7 @@ import           Control.Lens                         (view, ( # ), (&), (.~),
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials                          as Cred
+import           Credentials.DynamoDB
 import           Data.Aeson                           (object, (.=))
 import           Data.Aeson.Encode.Pretty             (encodePretty)
 import           Data.Aeson.Types                     (ToJSON (..))
@@ -62,25 +63,6 @@ import           System.IO
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x
 
-data Mode
-    = Setup     !Store
-    | Cleanup   !Store !Force
-    | List      !Store !Format
-    | Put       !Store !KeyId        !Context !Name !Input
-    | Get       !Store               !Context !Name !(Maybe Version) !Format
-    | Delete    !Store !Name         !Version !Force
-    | DeleteAll !Store !(Maybe Name) !Natural !Force
-
-current :: Mode -> Store
-current = \case
-    Setup     s         -> s
-    Cleanup   s _       -> s
-    List      s _       -> s
-    Put       s _ _ _ _ -> s
-    Get       s _ _ _ _ -> s
-    Delete    s _ _ _   -> s
-    DeleteAll s _ _ _   -> s
-
 data Force = NoPrompt | Prompt
 
 data Format = JSON | Echo
@@ -112,8 +94,27 @@ instance FromText Pair where
 toContext :: Alternative f => f Pair -> f Context
 toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 
-newtype App a = App { runApp :: AWS a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
+data Mode
+    = Setup     !Store
+    | Cleanup   !Store !Force
+    | List      !Store !Format
+    | Put       !Store !KeyId        !Context !Name !Input
+    | Get       !Store               !Context !Name !(Maybe Version) !Format
+    | Delete    !Store !Name         !Version !Force
+    | DeleteAll !Store !(Maybe Name) !Natural !Force
+
+current :: Mode -> Store
+current = \case
+    Setup     s         -> s
+    Cleanup   s _       -> s
+    List      s _       -> s
+    Put       s _ _ _ _ -> s
+    Get       s _ _ _ _ -> s
+    Delete    s _ _ _   -> s
+    DeleteAll s _ _ _   -> s
+
+newtype App a = App { unApp :: AWS a }
+    deriving ( Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
 
 instance MonadAWS App where
     liftAWS = App
@@ -125,10 +126,10 @@ instance Storage App where
         | Bkt (Maybe Host) BucketName (Maybe Text)
           deriving (Show)
 
-    layer = runApp
+    layer = unApp
 
     setup = \case
-        Tbl _ t -> App (layer (setup t))
+        Tbl _ t -> wrap (setup t)
 
     cleanup = \case
         Tbl _ t -> wrap (cleanup t)
@@ -150,6 +151,9 @@ instance Storage App where
 
 wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
 wrap = App . layer
+
+runApp :: Env -> App a -> IO a
+runApp e = runResourceT . runAWS e . unApp
 
 type Store = Ref App
 

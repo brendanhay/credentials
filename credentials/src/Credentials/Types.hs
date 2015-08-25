@@ -16,7 +16,6 @@
 --
 module Credentials.Types where
 
-import           Conduit                 hiding (await)
 import           Control.Exception.Lens
 import           Control.Lens            hiding (Context)
 import           Control.Monad
@@ -39,9 +38,6 @@ import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.DynamoDB
-import           Network.AWS.S3
-import           Network.AWS.S3          (BucketName, ObjectVersionId)
 import           Numeric.Natural
 
 -- | The KMS master key identifier.
@@ -111,22 +107,23 @@ instance ToLog Setup where
         Created -> "created"
         Exists  -> "exists"
 
-data CredentialError
--- if context is None:
---     msg = ("Could not decrypt hmac key with KMS. The credential may "
---            "require that an encryption context be provided to decrypt "
---            "it.")
--- else:
---     msg = ("Could not decrypt hmac key with KMS. The encryption "
---            "context provided may not match the one used when the "
---            "credential was stored.")
+class Storage m where
+    type Layer m :: * -> *
+    data Ref   m :: *
 
+    layer     :: m a -> Layer m a
+
+    setup     ::                              Ref m -> m Setup
+    cleanup   ::                              Ref m -> m ()
+    list      ::                              Ref m -> m [(Name, NonEmpty Version)]
+    insert    :: Name -> Secret            -> Ref m -> m Version
+    select    :: Name -> Maybe Version     -> Ref m -> m (Secret, Version)
+    delete    :: Name -> Version           -> Ref m -> m ()
+    deleteAll :: Name                      -> Ref m -> m ()
+
+data CredentialError
     = IntegrityFailure Name HMAC256 HMAC256
       -- ^ The computed HMAC doesn't matched the stored HMAC.
-
--- if hmac.hexdigest() != material['hmac']:
---         raise IntegrityError("Computed HMAC on %s does not match stored HMAC"
-
 
     | EncryptFailure Context Name Text
       -- ^ Failure occured during local encryption.
@@ -151,32 +148,9 @@ data CredentialError
 
       deriving (Eq, Show, Typeable)
 
---  except ConditionalCheckFailedException:
---                 latestVersion = getHighestVersion(args.credential, region,
---                                                   args.table)
---                 printStdErr("%s version %s is already in the credential store."
---                             "Use the -v flag to specify a new version" %
---                             (args.credential, latestVersion))
-
--- try:
---         kms_response = kms.generate_data_key(KeyId=kms_key, EncryptionContext=context, NumberOfBytes=64)
---     except:
---         raise KmsError("Could not generate key using KMS key %s" % kms_key)
-
 instance Exception CredentialError
 
 makeClassyPrisms ''CredentialError
 
-class Storage m where
-    type Layer m :: * -> *
-    data Ref   m :: *
-
-    layer     :: m a -> Layer m a
-
-    setup     ::                              Ref m -> m Setup
-    cleanup   ::                              Ref m -> m ()
-    list      ::                              Ref m -> m [(Name, NonEmpty Version)]
-    insert    :: Name -> Secret            -> Ref m -> m Version
-    select    :: Name -> Maybe Version     -> Ref m -> m (Secret, Version)
-    delete    :: Name -> Version           -> Ref m -> m ()
-    deleteAll :: Name                      -> Ref m -> m ()
+instance AsCredentialError SomeException where
+    _CredentialError = exception
