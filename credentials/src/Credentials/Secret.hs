@@ -105,7 +105,7 @@ decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
         <$> cipher (DecryptFailure c n) dataKey
 
 -- Decrypted plaintext data. This value may not be returned if the customer
--- master key is not available or if you didn\'t have permission to use it.
+-- master key is not available or if you didn't have permission to use it.
 plaintext :: (MonadThrow m, Exception e)
           => (Text -> e)
           -> DecryptResponse

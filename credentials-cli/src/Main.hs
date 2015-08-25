@@ -110,7 +110,7 @@ settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 100)
 
 options :: ParserInfo (Region, LogLevel, Mode)
-options = info (helper <*> liftA3 (,,) region level modes) (fullDesc <> header about)
+options = info (helper <*> modes) (fullDesc <> header about)
   where
     modes = subparser $ mconcat
         [ mode "setup"
@@ -123,13 +123,13 @@ options = info (helper <*> liftA3 (,,) region level modes) (fullDesc <> header a
 
         , mode "list"
             (List <$> store <*> format)
-            "List credential names and the respective versions\
+            "List all credential names and their respective versions\
             \ in the specified store."
 
         , mode "get"
             (Get <$> store <*> context <*> name <*> optional version <*> format)
             "Fetch and decrypt a specific version of a credential from the store. \
-            \[default: latest]"
+            \Defaults to the latest available version if --version is not specified."
 
         , mode "put"
             (Put <$> store <*> key <*> context <*> name <*> input)
@@ -143,16 +143,18 @@ options = info (helper <*> liftA3 (,,) region level modes) (fullDesc <> header a
 
         , mode "truncate"
             (DeleteAll <$> store <*> optional name <*> retain <*> force)
-            "Remove multiple versions of credentials from the store. \
+            "Remove multiple versions of a credential from the store. \
             \If no credential name is specified, it will operate on all \
-            \credentials."
+            \credentials. Defaults to removing all but the latest version."
         ]
 
-mode :: String -> Parser a -> String -> Mod CommandFields a
-mode m p h = command m . info p $ fullDesc <> progDesc h <> header about
+mode :: String -> Parser a -> String -> Mod CommandFields (Region, LogLevel, a)
+mode m p h = command m (info ((,,) <$> region <*> level <*> p) desc)
+  where
+    desc = fullDesc <> progDesc h <> header about
 
 about :: String
-about = "credentials - Administration CLI for credential and secret storage."
+about = "credentials - Secure Credentials Administration."
 
 region :: Parser Region
 region = option text
@@ -182,7 +184,8 @@ level = option (eitherReader r)
 
 store :: Parser Store
 store = option text
-     ( long "store"
+     ( short 'p'
+    <> long "protocol"
     <> metavar "URI"
     <> help
         ("Protocol URI for the storage system. (proto://[address:port/]storage-ref) \
@@ -222,7 +225,7 @@ version = option text
      ( short 'v'
     <> long "version"
     <> metavar "NUMBER"
-    <> help "A specific credential version."
+    <> help "A specific version of the secret."
     <> completeWith (map show ([1..9] :: [Int]))
      )
 
@@ -238,7 +241,7 @@ format = option text
      ( short 'o'
     <> long "format"
     <> metavar "FORMAT"
-    <> help "Output format. (json|echo) [default: echo]"
+    <> help "Output format to emit when getting or listing credentials. (json|echo) [default: echo]"
     <> value Echo
     <> complete
      )
@@ -248,7 +251,7 @@ retain = option text
      ( short 'k'
     <> long "keep"
     <> metavar "NUMBER"
-    <> help "Number of versions to retain. [default: latest]"
+    <> help "Number of versions to retain when truncating. [default: latest]"
     <> value 1
      )
 
@@ -260,7 +263,7 @@ input = textual <|> filepath
              ( short 's'
             <> long "secret"
             <> metavar "STRING"
-            <> help "The raw unencrypted value of the credential."
+            <> help "The unencrypted secret."
              )
 
     filepath = Path
@@ -268,7 +271,7 @@ input = textual <|> filepath
              ( short 'p'
             <> long "path"
             <> metavar "PATH"
-            <> help "A path to read as the raw unencrypted value of the credential."
+            <> help "A file to read as the contents of the unencrypted secret."
             <> action "file"
              )
 

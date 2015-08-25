@@ -113,13 +113,13 @@ class Storage m where
 
     layer     :: m a -> Layer m a
 
-    setup     ::                              Ref m -> m Setup
-    cleanup   ::                              Ref m -> m ()
-    list      ::                              Ref m -> m [(Name, NonEmpty Version)]
-    insert    :: Name -> Secret            -> Ref m -> m Version
-    select    :: Name -> Maybe Version     -> Ref m -> m (Secret, Version)
-    delete    :: Name -> Version           -> Ref m -> m ()
-    deleteAll :: Name                      -> Ref m -> m ()
+    setup     ::                          Ref m -> m Setup
+    cleanup   ::                          Ref m -> m ()
+    list      ::                          Ref m -> m [(Name, NonEmpty Version)]
+    insert    :: Name -> Secret        -> Ref m -> m Version
+    select    :: Name -> Maybe Version -> Ref m -> m (Secret, Version)
+    delete    :: Name -> Version       -> Ref m -> m ()
+    deleteAll :: Name                  -> Ref m -> m ()
 
 data CredentialError
     = IntegrityFailure Name HMAC256 HMAC256

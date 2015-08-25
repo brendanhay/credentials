@@ -38,11 +38,6 @@ import           System.IO
 
 default (Builder)
 
-data Agree
-    = Yes
-    | No
-    | What String
-
 quit :: ToLog a => Int -> a -> IO ()
 quit n m = err m >> exitWith (ExitFailure n)
 

@@ -60,10 +60,12 @@ import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
 
-(%) :: ToLog a => Builder -> a -> Builder
-b % x = b <> build x
-
 data Force = NoPrompt | Prompt
+
+data Agree
+    = Yes
+    | No
+    | What String
 
 data Format = JSON | Echo
     deriving (Data, Show)
@@ -247,3 +249,6 @@ instance ToJSON (Name, (Value, Version)) where
         , "version" .= toText v
         , "secret"  .= toText (toBS x)
         ]
+
+(%) :: ToLog a => Builder -> a -> Builder
+b % x = b <> build x
