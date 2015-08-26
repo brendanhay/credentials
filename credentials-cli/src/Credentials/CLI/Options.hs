@@ -49,12 +49,12 @@ import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
                                                (<+>), (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
--- | Setup a regular required option with formatted help text.
-regular :: Doc       -- ^ The options' description.
-        -> Maybe Doc -- ^ The help body (title/footer in tabular).
-        -> Fact
-        -> Mod OptionFields a
-regular title body r = helpDoc . Just $ title <> doc <> hardline
+-- | Setup an option with formatted help text.
+describe :: Doc       -- ^ The options' description.
+         -> Maybe Doc -- ^ The help body (title/footer in tabular).
+         -> Fact
+         -> Mod OptionFields a
+describe title body r = helpDoc . Just $ title <> doc <> hardline
   where
     doc | Just b <- body = pad (maybe b (b PP.<$>) foot)
         | otherwise      = maybe mempty pad foot
@@ -67,7 +67,7 @@ regular title body r = helpDoc . Just $ title <> doc <> hardline
     pad = mappend hardline . indent 2
 
 -- | Setup a tabular list of possible values for an option,
--- a default value, and an autocompleter.
+-- a default value, and an auto-completer.
 tabular :: ToText a
         => Doc        -- ^ The options' description.
         -> Doc        -- ^ A title for the values.
@@ -75,25 +75,24 @@ tabular :: ToText a
         -> a          -- ^ A default value.
         -> Maybe Doc  -- ^ Footer contents.
         -> Mod OptionFields a
-tabular title note xs x foot = body <> value x <> completeWith (map fst ys)
+tabular title note xs x foot = doc <> value x <> completeWith (map fst ys)
   where
-    body = regular title (Just (defaults note ys def foot)) Default
-
-    def = string x
+    doc = defaults title note ys def foot
+    def = toText x
     ys  = map (first string) xs
 
 -- | Construct a tabular representation displaying the default values,
 -- without using ToText.
-defaults :: Doc
-         -> [(String, Doc)]
-         -> String
-         -> Maybe Doc
-         -> Doc
-defaults note xs def foot = maybe id (flip (PP.<$>)) foot body
+-- defaults :: Doc
+--          -> [(String, Doc)]
+--          -> String
+--          -> Maybe Doc
+--          -> Doc
+defaults title note xs x foot = describe title (Just doc) Default
   where
-    body = note
+    doc = maybe id (flip (PP.<$>)) foot $ note
         PP.<$> indent 2 rows
-        PP.<$> ("Defaults to " <> bold (PP.text def) <> ".")
+        PP.<$> ("Defaults to " <> bold (PP.text (string x)) <> ".")
 
     rows | [r]  <- xs = sep r
          | r:rs <- xs = foldl' (PP.<$>) (sep r) (map sep rs)

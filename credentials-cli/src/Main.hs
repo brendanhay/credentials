@@ -57,8 +57,7 @@ import           Options.Applicative          hiding (optional)
 import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
-                                               (<+>), (</>))
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, indent, (<+>), (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 default (Builder, Text)
@@ -126,9 +125,15 @@ program r = \case
             Store.delete n v s
             says ("Deleted version " % v % " of " % n % ".")
 
+settings :: ParserPrefs
+settings = prefs (showHelpOnError <> columns 90)
+
 options :: ParserInfo (Region, LogLevel, Mode)
-options = info (helper <*> modes) (fullDesc <> headerDoc (Just about))
+options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
+    desc = bold "credentials"
+        <+> "- Provides a unified interface for managing secure, shared credentials."
+
     modes = subparser $ mconcat
         [ mode "setup"
             (Setup <$> store)
@@ -168,22 +173,14 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just about))
             \credentials. Defaults to removing all but the latest version."
         ]
 
-about :: Doc
-about = bold "credentials"
-    <+> "- Provides a unified interface for managing secure, shared credentials."
-
-settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns 90)
-
 mode :: String
      -> Parser a
      -> String
      -> Doc
      -> Mod CommandFields (Region, LogLevel, a)
-mode name p help' foot = command name (info parse desc)
+mode n p h foot = command n (info ((,,) <$> region <*> level <*> p) desc)
   where
-    parse = (,,) <$> region <*> level <*> p
-    desc  = fullDesc <> progDesc help' <> footerDoc (Just (indent 2 foot))
+    desc = fullDesc <> progDesc h <> footerDoc (Just (indent 2 foot))
 
 region :: Parser Region
 region = option text
@@ -209,22 +206,20 @@ level = option text
              ]
          Info Nothing
      )
--- defaults :: Doc -> [(String, Doc)] -> Doc -> Maybe Doc -> Doc
-
 
 store :: Parser Store
 store = option text
      ( short 'u'
     <> long "uri"
     <> metavar "URI"
-    <> regular "URI specifying the storage system to use."
-         ( Just $ defaults "The URI format must be one of the following protocols:"
+    <> defaults "URI specifying the storage system to use."
+         "The URI format must be one of the following protocols:"
              [ ("dynamo://[host[:port]]/table-name", "?")
              , ("s3://[host[:port]]/bucket-name[/prefix]", "?")
-             ] (show defaultStore)
-             (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
-                 </> "then the AWS endpoints will be used if appropriate.")
-         ) Default
+             ]
+         defaultStore
+         (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
+             </> "then the AWS endpoints will be used if appropriate.")
      )
 
 key :: Parser KeyId
@@ -232,11 +227,15 @@ key = option text
     ( short 'k'
    <> long "key"
    <> metavar "STRING"
-   -- <> ann
-   --     "The KMS master key id to use."
-   --     "Blah."
-   --     Nothing
-   -- <> def
+   <> defaults "The KMS Master Key Id to use."
+       "Examples of KMS aliases or ARNs are:"
+           [ ("arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012", "Key ARN Example")
+           , ("arn:aws:kms:us-east-1:123456789012:alias/MyAliasName", "Alias ARN Example")
+           , ("12345678-1234-1234-1234-123456789012", "Globally Unique Key ID Example")
+           , ("alias/MyAliasName", "Alias Name Example")
+           ]
+       defaultKeyId
+       Nothing
     )
 
 context :: Parser Context
@@ -244,7 +243,7 @@ context = toContext $ option text
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
-   <> regular "A key/value pair to add to the encryption context."
+   <> describe "A key/value pair to add to the encryption context."
         (Just $ "You can enter multiple key/value pairs. For example:"
       </> indent 2 "-c foo=bar -c something=\"containing spaces\" ..."
         ) Optional
@@ -255,7 +254,7 @@ name r = option text
      ( short 'n'
     <> long "name"
     <> metavar "STRING"
-    <> regular "The unique name of the credential." Nothing r
+    <> describe "The unique name of the credential." Nothing r
      )
 
 version :: Fact -> Parser Version
@@ -263,7 +262,7 @@ version r = option text
      ( short 'v'
     <> long "version"
     <> metavar "STRING"
-    <> regular "The version of the secret." Nothing r
+    <> describe "The version of the secret." Nothing r
      )
 
 force :: Parser Force
