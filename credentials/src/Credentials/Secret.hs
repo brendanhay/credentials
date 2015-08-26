@@ -44,10 +44,11 @@ import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
+import           Network.AWS.Error       (hasCode, hasStatus)
 import           Network.AWS.KMS         as KMS
 import           Numeric.Natural
 
-encrypt :: (MonadThrow m, MonadAWS m)
+encrypt :: (MonadThrow m, MonadAWS m, Typeable m)
         => KeyId
         -> Context
         -> Name
@@ -56,9 +57,16 @@ encrypt :: (MonadThrow m, MonadAWS m)
 encrypt k c n (Value x) = do
     -- Generate a 64 byte key.
     -- First 32 bytes for data encryption, last 32 bytes for HMAC.
-    rs <- send $ generateDataKey (toText k)
-        & gdkNumberOfBytes     ?~ bytes
-        & gdkEncryptionContext .~ context c
+    let rq = generateDataKey (toText k)
+           & gdkNumberOfBytes     ?~ bytes
+           & gdkEncryptionContext .~ context c
+
+    rs <- catches (send rq)
+        [ handler (_ServiceError . hasStatus 400 . hasCode "NotFound") $
+            throwM . MasterKeyMissing k . fmap toText . _serviceMessage
+        , handler _NotFoundException $
+            throwM . MasterKeyMissing k . fmap toText . _serviceMessage
+        ]
 
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
 
@@ -77,21 +85,16 @@ decrypt :: (MonadThrow m, MonadAWS m)
         -> Secret
         -> m Value
 decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
-    e  <- trying _InvalidCiphertextException .
-        send $ KMS.decrypt key & dEncryptionContext .~ context c
+    let rq = KMS.decrypt key & dEncryptionContext .~ context c
 
-    rs <- case e of
-        Left _ | blank c ->
-            throwM $ DecryptFailure c n
-                "Could not decrypt stored key using KMS. \
-                \The credential may require an ecryption context."
-        Left _           ->
-            throwM $ DecryptFailure c n
-                "Could not decrypt stored key using KMS. \
-                \The provided encryption context may not match the one \
-                \used when the credential was stored."
-        Right x          ->
-            pure x
+    rs <- catching _InvalidCiphertextException (send rq) $ \e ->
+        throwM . DecryptFailure c n $
+            if blank c
+                then "Could not decrypt stored key using KMS. \
+                     \The credential may require an ecryption context."
+                else  "Could not decrypt stored key using KMS. \
+                     \The provided encryption context may not match the one \
+                     \used when the credential was stored."
 
     p  <- plaintext (DecryptFailure c n) rs
 

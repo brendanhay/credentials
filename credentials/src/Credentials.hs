@@ -36,6 +36,7 @@ import           Data.HashMap.Strict    (HashMap)
 import           Data.List.NonEmpty     (NonEmpty (..))
 import           Data.Maybe
 import qualified Data.Text              as Text
+import           Data.Typeable
 import           Network.AWS
 import           Network.AWS
 import           Network.AWS            (Region)
@@ -43,7 +44,7 @@ import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Numeric.Natural
 
-put :: (MonadThrow m, MonadAWS m, Storage m)
+put :: (MonadThrow m, MonadAWS m, Storage m, Typeable m)
     => KeyId
     -> Context
     -> Name

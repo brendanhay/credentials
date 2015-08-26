@@ -122,7 +122,10 @@ class Storage m where
     deleteAll :: Name                  -> Ref m -> m ()
 
 data CredentialError
-    = IntegrityFailure Name HMAC256 HMAC256
+    = MasterKeyMissing KeyId (Maybe Text)
+      -- ^ The specified master key id doesn't exist.
+
+    | IntegrityFailure Name HMAC256 HMAC256
       -- ^ The computed HMAC doesn't matched the stored HMAC.
 
     | EncryptFailure Context Name Text
