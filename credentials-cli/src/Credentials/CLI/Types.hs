@@ -20,14 +20,17 @@
 --
 module Credentials.CLI.Types where
 
+import qualified Blaze.ByteString.Builder             as BB
 import           Control.Exception.Lens
 import           Control.Lens                         (view, ( # ), (&), (.~),
                                                        (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials                          as Cred
+import           Credentials.CLI.Protocol
 import           Credentials.DynamoDB
 import           Data.Aeson                           (object, (.=))
+import           Data.Aeson.Encode                    (encodeToByteStringBuilder)
 import           Data.Aeson.Encode.Pretty             (encodePretty)
 import           Data.Aeson.Types                     (ToJSON (..))
 import qualified Data.Attoparsec.Text                 as A
@@ -59,6 +62,7 @@ import           Options.Applicative
 import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
+import           URI.ByteString
 
 data Force = NoPrompt | Prompt
 
@@ -67,34 +71,24 @@ data Agree
     | No
     | What String
 
-data Format = JSON | Echo
-    deriving (Data, Show)
+data Format
+    = Pretty
+    | JSON
+    | Shell
+      deriving (Data, Show)
 
 instance ToText Format where
     toText = \case
-        JSON -> "json"
-        Echo -> "echo"
+        Pretty -> "json-pretty"
+        JSON   -> "json"
+        Shell  -> "echo"
 
 instance FromText Format where
     parser = takeLowerText >>= \case
-        "json" -> pure JSON
-        "echo" -> pure Echo
-        e      -> fromTextError $ "Failure parsing format from: " <> e
-
-data Input
-    = Raw  Value
-    | Path FilePath
-
-data Pair = Pair Text Text
-
-instance FromText Pair where
-    parser = Pair <$> key <*> val
-      where
-        key = A.skipSpace *> A.takeWhile1 (/= '=')
-        val = A.char '='  *> A.takeText
-
-toContext :: Alternative f => f Pair -> f Context
-toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
+        "json-pretty" -> pure Pretty
+        "json"        -> pure JSON
+        "shell"       -> pure Shell
+        e             -> fromTextError $ "Failure parsing format from: " <> e
 
 data Mode
     = Setup     !Store
@@ -124,8 +118,8 @@ instance MonadAWS App where
 instance Storage App where
     type Layer App = AWS
     data Ref   App
-        = Table  (Maybe Host) (Ref DynamoDB)
-        | Bucket (Maybe Host) BucketName (Maybe Text)
+        = Table  URI (Ref DynamoDB)
+        | Bucket URI BucketName (Maybe Text)
           deriving (Show)
 
     layer = unApp
@@ -160,64 +154,39 @@ runApp e = runResourceT . runAWS e . unApp
 type Store = Ref App
 
 defaultStore :: Store
-defaultStore = Table (Just (Host False "localhost" 8000)) defaultTable
+defaultStore = Table uri defaultTable
+  where
+    uri    = URI scheme (Just auth) ("/" <> toBS defaultTable) mempty Nothing
+    scheme = Scheme "dynamo"
+    auth   = Authority Nothing (Host "localhost") (Just (Port 8000))
 
-instance ToLog Store where
-    build = build . toText
+setStore :: HasEnv a => Store -> a -> a
+setStore = configure . \case
+    Table  u _   -> endpoint u dynamoDB
+    Bucket u _ _ -> endpoint u s3
 
 instance FromText Store where
-    parser = (parser <* A.string scheme) >>= \case
-        Dynamo -> Table <$> host <*> parser
-        S3     -> Bucket <$> host <*> bucket <*> prefix
+    parser = uri >>= either fail pure . fromURI
       where
-        host   = optional (parser <* A.char '/')
-        bucket = BucketName <$> A.takeWhile1 (A.notInClass ":/")
-        prefix = optional (A.char '/' *> takeText)
+        uri = A.takeText >>= either (fail . show) pure . f . toBS
+        f   = parseURI strictURIParserOptions
+
+instance FromURI Store where
+    fromURI u = Table u <$> fromURI u <|> uncurry (Bucket u) <$> fromURI u
+
+instance ToLog Store where
+    build = build . BB.toLazyByteString . serializeURI . \case
+        Table  u _   -> u
+        Bucket u _ _ -> u
 
 instance ToText Store where
-    toText = \case
-        Table  h t   -> toText Dynamo <> scheme <> host h <> toText t
-        Bucket h b p -> toText S3     <> scheme <> host h <> toText b <> prefix p
-      where
-        host   = maybe mempty ((<> "/") . toText)
-        prefix = maybe mempty (mappend "/")
+    toText = toText .BB.toByteString . serializeURI . \case
+        Table  u _   -> u
+        Bucket u _ _ -> u
 
-storeEndpoint :: HasEnv a => Store -> a -> a
-storeEndpoint = configure . \case
-    Table  h _   -> host h dynamoDB
-    Bucket h _ _ -> host h s3
-  where
-    host (Just (Host s h p)) = setEndpoint s h p
-    host _                   = id
-
-scheme :: Text
-scheme = "://"
-
-data Protocol
-    = Dynamo
-    | S3
-      deriving (Eq, Show)
-
-instance FromText Protocol where
-    parser = (A.asciiCI "dynamo" >> pure Dynamo)
-         <|> (A.asciiCI "s3"     >> pure S3)
-
-instance ToText Protocol where
-    toText = \case
-        Dynamo -> "dynamo"
-        S3     -> "s3"
-
-data Host = Host !Bool !ByteString !Int
-    deriving (Eq, Show)
-
-instance FromText Host where
-    parser = do
-        h <- A.takeWhile1 (/= ':') <* A.char ':'
-        p <- A.decimal
-        return $! Host (p == 443) (toBS h) p
-
-instance ToText Host where
-    toText (Host _ h p) = toText h <> ":" <> toText p
+data Input
+    = Raw  Value
+    | Path FilePath
 
 data Output where
     Output :: (ToLog a, ToJSON a) => Format -> a -> Output
@@ -225,8 +194,9 @@ data Output where
 instance ToLog Output where
     build (Output f x) =
         case f of
-            Echo -> build x
-            JSON -> build (encodePretty x) <> "\n"
+            Pretty -> build (encodePretty x) <> "\n"
+            JSON   -> encodeToByteStringBuilder (toJSON x)
+            Shell  -> build x
 
 instance ToLog [(Name, NonEmpty Version)] where
     build = foldMap name
@@ -249,6 +219,17 @@ instance ToJSON (Name, (Value, Version)) where
         , "version" .= toText v
         , "secret"  .= toText (toBS x)
         ]
+
+data Pair = Pair Text Text
+
+instance FromText Pair where
+    parser = Pair <$> key <*> val
+      where
+        key = A.skipSpace *> A.takeWhile1 (/= '=')
+        val = A.char '='  *> A.takeText
+
+toContext :: Alternative f => f Pair -> f Context
+toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x

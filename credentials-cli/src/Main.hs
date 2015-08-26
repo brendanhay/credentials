@@ -57,12 +57,35 @@ import           System.IO
 
 default (Builder)
 
+
+-- Hosts:
+--   always expect a host such as 'amazon' or 'aws'.
+    -- dynamo://aws/table-name
+    -- s3://aws/bucket[/prefix]
+
+-- Deleting:
+--   how about tombstones, or some thought out plan for how the version number
+--   semantics are impacted by deletes.
+
+--   Some opaque version format returned?
+--     sha (version + timestamp)?
+
+-- Large File Storage:
+--   have a pointer to something in S3, or actually store everything there?
+--   is S3's versioning enough?
+
+-- Val:
+--   rename to Table -> Item -> Attribute
+
+-- ANSII Leijen PP, colored output and better formatted headings + non redundant
+-- progDesc + header etc.
+
 main :: IO ()
 main = do
     (r, v, m) <- customExecParser settings options
 
     l <- newLogger v stdout
-    e <- newEnv r Discover <&> (envLogger .~ l) . storeEndpoint (current m)
+    e <- newEnv r Discover <&> (envLogger .~ l) . setStore (current m)
 
     catches (runApp e (program r m))
         [ handler _CredentialError $ \x -> quit 1 (show x)
@@ -171,24 +194,23 @@ level = option (eitherReader r)
      ( short 'l'
     <> long "level"
     <> metavar "LEVEL"
-    <> help "Log message level to emit. (trace|debug|info|error) [default: info]"
+    <> help "AWS log message level to emit. (trace|debug|error) [default: none]"
     <> value Info
     <> completeWith ["info", "error", "debug", "trace"]
      )
   where
     r "debug" = Right Debug
     r "trace" = Right Trace
-    r "info"  = Right Info
     r "error" = Right Error
     r e       = Left $ "Unrecognised log level: " ++ e
 
 store :: Parser Store
 store = option text
-     ( short 'p'
-    <> long "protocol"
+     ( short 'u'
+    <> long "uri"
     <> metavar "URI"
     <> help
-        ("Protocol URI for the storage system. (proto://[address:port/]storage-ref) \
+        ("Protocol URI for the storage system. (store://[address:port/]storage-ref) \
          \[default: " ++ string defaultStore ++ "].")
     <> value defaultStore
      )
@@ -241,8 +263,8 @@ format = option text
      ( short 'o'
     <> long "format"
     <> metavar "FORMAT"
-    <> help "Output format to emit when getting or listing credentials. (json|echo) [default: echo]"
-    <> value Echo
+    <> help "Output format to emit when getting or listing credentials. (json|json-pretty|shell) [default: shell]"
+    <> value Shell
     <> complete
      )
 
