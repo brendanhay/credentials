@@ -7,6 +7,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
 
@@ -43,12 +44,17 @@ import           Data.Char
 import           Data.Conduit                         (($$))
 import qualified Data.Conduit.List                    as CL
 import           Data.Data
+import           Data.Data
 import           Data.Foldable                        (foldMap)
 import           Data.HashMap.Strict                  (HashMap)
+import           Data.HashMap.Strict                  (HashMap)
 import qualified Data.HashMap.Strict                  as Map
+import           Data.List                            (foldl', sort)
 import           Data.List                            (intersperse)
 import           Data.List.NonEmpty                   (NonEmpty (..))
+import           Data.List.NonEmpty                   (NonEmpty (..))
 import           Data.Maybe
+import           Data.String
 import qualified Data.Text                            as Text
 import           GHC.Exts                             (toList)
 import           Network.AWS
@@ -62,14 +68,17 @@ import           Options.Applicative
 import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
+import           Text.PrettyPrint.ANSI.Leijen         (Doc, Pretty)
 import           URI.ByteString
 
-data Force = NoPrompt | Prompt
+data Fact
+    = Required
+    | Optional
+    | Default
 
-data Agree
-    = Yes
-    | No
-    | What String
+data Force
+    = NoPrompt
+    | Prompt
 
 data Format
     = Pretty
@@ -120,7 +129,6 @@ instance Storage App where
     data Ref   App
         = Table  URI (Ref DynamoDB)
         | Bucket URI BucketName (Maybe Text)
-          deriving (Show)
 
     layer = unApp
 
@@ -165,6 +173,7 @@ setStore = configure . \case
     Table  u _   -> endpoint u dynamoDB
     Bucket u _ _ -> endpoint u s3
 
+
 instance FromText Store where
     parser = uri >>= either fail pure . fromURI
       where
@@ -173,6 +182,9 @@ instance FromText Store where
 
 instance FromURI Store where
     fromURI u = Table u <$> fromURI u <|> uncurry (Bucket u) <$> fromURI u
+
+instance Show Store where
+    show = Text.unpack . toText
 
 instance ToLog Store where
     build = build . BB.toLazyByteString . serializeURI . \case
@@ -241,3 +253,65 @@ toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x
+
+-- Orphan.
+instance FromText LogLevel where
+    parser = takeLowerText >>= \case
+        "error" -> pure Error
+        "debug" -> pure Debug
+        "trace" -> pure Trace
+        e       -> fromTextError $ "Failure parsing log level from: " <> e
+
+instance ToText LogLevel where
+    toText = Text.toLower . Text.pack . show
+
+-- class Help a where
+--     initial  :: a
+--     document :: Proxy a -> [(Text, Maybe Doc)]
+
+-- instance Help Region where
+--     initial  = Frankfurt
+--     document = map ((,Nothing) . toText) . unsafeEnum
+
+-- instance Help Format where
+--     initial  = Shell
+--     document = values
+--         [ (Pretty, Just "foo")
+--         , (JSON,   Just "bar")
+--         , (Shell,  Just "quz")
+--         ]
+
+-- instance Help LogLevel where
+--     initial  = Info
+--     document = values
+--         [ (Error, Nothing)
+--         , (Debug, Nothing)
+--         , (Trace, Nothing)
+--         ]
+
+-- instance Help Store where
+--     initial  = defaultStore
+--     document = const
+--         [ ("dynamo://[host[:port]]/table-name",       Nothing)
+--         , ("s3://[host[:port]]/bucket-name[/prefix]", Nothing)
+--         ]
+
+-- instance Help KeyId where
+--     intiial  = defaultKeyId
+--     document = const []
+
+-- annotated :: forall a. Help a => Proxy a -> [(Doc, Maybe Doc)]
+-- annotated = map (first (fromString . string)) . document
+
+-- values :: ToText a => [(a, b)] -> c -> [(Text, b)]
+-- values = const . map (first toText)
+          --
+
+unsafeEnum :: forall a. (Ord a, Data a, ToText a) => [a]
+unsafeEnum = sort . map fromConstr . dataTypeConstrs $ dataTypeOf val
+  where
+    val :: a
+    val = undefined
+
+string :: ToText a => a -> String
+string = Text.unpack . toText

@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
@@ -21,47 +22,46 @@
 module Main (main) where
 
 import           Control.Exception.Lens
-import           Control.Lens                         (view, ( # ), (&), (.~),
-                                                       (<&>))
+import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
-import           Credentials                          as Store hiding (context)
+import           Credentials                  as Store hiding (context)
 import           Credentials.CLI.IO
+import           Credentials.CLI.Options
 import           Credentials.CLI.Types
-import           Data.ByteString                      (ByteString)
-import qualified Data.ByteString                      as BS
-import           Data.ByteString.Builder              (Builder)
-import qualified Data.ByteString.Builder              as Build
-import qualified Data.ByteString.Char8                as BS8
+import           Data.Bifunctor
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString              as BS
+import           Data.ByteString.Builder      (Builder)
+import qualified Data.ByteString.Builder      as Build
+import qualified Data.ByteString.Char8        as BS8
 import           Data.Char
-import           Data.Conduit                         (($$))
-import qualified Data.Conduit.List                    as CL
+import           Data.Conduit                 (($$))
+import qualified Data.Conduit.List            as CL
 import           Data.Data
-import           Data.HashMap.Strict                  (HashMap)
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import qualified Data.List.NonEmpty                   as NE
+import           Data.HashMap.Strict          (HashMap)
+import           Data.List                    (foldl', sort)
+import           Data.List.NonEmpty           (NonEmpty (..))
+import qualified Data.List.NonEmpty           as NE
 import           Data.Maybe
-import qualified Data.Text                            as Text
-import qualified Data.Text.IO                         as Text
+import           Data.Proxy
+import qualified Data.Text                    as Text
+import qualified Data.Text.IO                 as Text
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.S3                       (BucketName,
-                                                       ObjectVersionId)
+import           Network.AWS.S3               (BucketName, ObjectVersionId)
 import           Numeric.Natural
-import           Options.Applicative
-import           Options.Applicative.Builder.Internal (HasCompleter)
+import           Options.Applicative          hiding (optional)
+import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
+                                               (<+>), (</>))
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-default (Builder)
-
-
--- Hosts:
---   always expect a host such as 'amazon' or 'aws'.
-    -- dynamo://aws/table-name
-    -- s3://aws/bucket[/prefix]
+default (Builder, Text)
 
 -- Deleting:
 --   how about tombstones, or some thought out plan for how the version number
@@ -76,9 +76,6 @@ default (Builder)
 
 -- Val:
 --   rename to Table -> Item -> Attribute
-
--- ANSII Leijen PP, colored output and better formatted headings + non redundant
--- progDesc + header etc.
 
 main :: IO ()
 main = do
@@ -129,90 +126,105 @@ program r = \case
             Store.delete n v s
             says ("Deleted version " % v % " of " % n % ".")
 
-settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns 100)
-
 options :: ParserInfo (Region, LogLevel, Mode)
-options = info (helper <*> modes) (fullDesc <> header about)
+options = info (helper <*> modes) (fullDesc <> headerDoc (Just about))
   where
     modes = subparser $ mconcat
         [ mode "setup"
             (Setup <$> store)
             "Setup a new credential store."
+            "Foo "
 
         , mode "cleanup"
             (Cleanup <$> store <*> force)
             "Remove the credential store entirely."
+            "Bar"
 
         , mode "list"
             (List <$> store <*> format)
-            "List all credential names and their respective versions\
-            \ in the specified store."
+            "List all credential names and their respective versions."
+            "The -u,--uri option takes a URI conforming to one of the following protocols"
 
         , mode "get"
-            (Get <$> store <*> context <*> name <*> optional version <*> format)
-            "Fetch and decrypt a specific version of a credential from the store. \
-            \Defaults to the latest available version if --version is not specified."
+            (Get <$> store <*> context <*> require name <*> optional version <*> format)
+            "Fetch and decrypt a specific version of a credential."
+            "Defaults to the latest available version, if --version is not specified."
 
         , mode "put"
-            (Put <$> store <*> key <*> context <*> name <*> input)
-            "Write and encrypt a new version of a credential to the store. \
-            \You can supply the secret as a string with --secret, or as \
+            (Put <$> store <*> key <*> context <*> require name <*> input)
+            "Write and encrypt a new version of a credential to the store."
+            "You can supply the secret as a string with --secret, or as \
             \a file path to the secret's contents using --path."
 
         , mode "delete"
-            (Delete <$> store <*> name <*> version <*> force)
+            (Delete <$> store <*> require name <*> require version <*> force)
             "Remove a specific version of a credential from the store."
+            "Foo"
 
         , mode "truncate"
             (DeleteAll <$> store <*> optional name <*> retain <*> force)
-            "Remove multiple versions of a credential from the store. \
-            \If no credential name is specified, it will operate on all \
+            "Remove multiple versions of a credential from the store."
+            "If no credential name is specified, it will operate on all \
             \credentials. Defaults to removing all but the latest version."
         ]
 
-mode :: String -> Parser a -> String -> Mod CommandFields (Region, LogLevel, a)
-mode m p h = command m (info ((,,) <$> region <*> level <*> p) desc)
-  where
-    desc = fullDesc <> progDesc h <> header about
+about :: Doc
+about = bold "credentials"
+    <+> "- Provides a unified interface for managing secure, shared credentials."
 
-about :: String
-about = "credentials - Secure Credentials Administration."
+settings :: ParserPrefs
+settings = prefs (showHelpOnError <> columns 90)
+
+mode :: String
+     -> Parser a
+     -> String
+     -> Doc
+     -> Mod CommandFields (Region, LogLevel, a)
+mode name p help' foot = command name (info parse desc)
+  where
+    parse = (,,) <$> region <*> level <*> p
+    desc  = fullDesc <> progDesc help' <> footerDoc (Just (indent 2 foot))
 
 region :: Parser Region
 region = option text
      ( short 'r'
     <> long "region"
     <> metavar "REGION"
-    <> help "The AWS Region in which to operate. [default: eu-central-1]"
-    <> value Frankfurt
-    <> complete
+    <> tabular "The AWS region in which to operate."
+         "The following regions are supported:"
+             (map (second (PP.text . show) . join (,)) unsafeEnum)
+         Frankfurt Nothing
      )
 
 level :: Parser LogLevel
-level = option (eitherReader r)
+level = option text
      ( short 'l'
     <> long "level"
     <> metavar "LEVEL"
-    <> help "AWS log message level to emit. (trace|debug|error) [default: none]"
-    <> value Info
-    <> completeWith ["info", "error", "debug", "trace"]
+    <> tabular "Log level of AWS messages to emit."
+         "The following log levels are supported:"
+             [ (Error, "Service errors and exceptions.")
+             , (Debug, "Requests and responses.")
+             , (Trace, "Sensitive signing metadata.")
+             ]
+         Info Nothing
      )
-  where
-    r "debug" = Right Debug
-    r "trace" = Right Trace
-    r "error" = Right Error
-    r e       = Left $ "Unrecognised log level: " ++ e
+-- defaults :: Doc -> [(String, Doc)] -> Doc -> Maybe Doc -> Doc
+
 
 store :: Parser Store
 store = option text
      ( short 'u'
     <> long "uri"
     <> metavar "URI"
-    <> help
-        ("Protocol URI for the storage system. (store://[address:port/]storage-ref) \
-         \[default: " ++ string defaultStore ++ "].")
-    <> value defaultStore
+    <> regular "URI specifying the storage system to use."
+         ( Just $ defaults "The URI format must be one of the following protocols:"
+             [ ("dynamo://[host[:port]]/table-name", "?")
+             , ("s3://[host[:port]]/bucket-name[/prefix]", "?")
+             ] (show defaultStore)
+             (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
+                 </> "then the AWS endpoints will be used if appropriate.")
+         ) Default
      )
 
 key :: Parser KeyId
@@ -220,10 +232,11 @@ key = option text
     ( short 'k'
    <> long "key"
    <> metavar "STRING"
-   <> help
-       ("The KMS master key id to use. \
-       \[default: " ++ string defaultKeyId ++ "]")
-   <> value defaultKeyId
+   -- <> ann
+   --     "The KMS master key id to use."
+   --     "Blah."
+   --     Nothing
+   -- <> def
     )
 
 context :: Parser Context
@@ -231,24 +244,26 @@ context = toContext $ option text
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
-   <> help "A key/value pair to add to the encryption context."
+   <> regular "A key/value pair to add to the encryption context."
+        (Just $ "You can enter multiple key/value pairs. For example:"
+      </> indent 2 "-c foo=bar -c something=\"containing spaces\" ..."
+        ) Optional
     )
 
-name :: Parser Name
-name = option text
+name :: Fact -> Parser Name
+name r = option text
      ( short 'n'
     <> long "name"
     <> metavar "STRING"
-    <> help "The unique name of the credential."
+    <> regular "The unique name of the credential." Nothing r
      )
 
-version :: Parser Version
-version = option text
+version :: Fact -> Parser Version
+version r = option text
      ( short 'v'
     <> long "version"
-    <> metavar "NUMBER"
-    <> help "A specific version of the secret."
-    <> completeWith (map show ([1..9] :: [Int]))
+    <> metavar "STRING"
+    <> regular "The version of the secret." Nothing r
      )
 
 force :: Parser Force
@@ -263,9 +278,13 @@ format = option text
      ( short 'o'
     <> long "format"
     <> metavar "FORMAT"
-    <> help "Output format to emit when getting or listing credentials. (json|json-pretty|shell) [default: shell]"
-    <> value Shell
-    <> complete
+    <> tabular "Output format for displaying retrieved credentials."
+         "The following formats are supported:"
+             [ (Pretty, "Pretty printed JSON.")
+             , (JSON,   "JSON suitable for piping to another process.")
+             , (Shell,  "Single or multi-line textual output.")
+             ]
+         Shell Nothing
      )
 
 retain :: Parser Natural
@@ -296,19 +315,3 @@ input = textual <|> filepath
             <> help "A file to read as the contents of the unencrypted secret."
             <> action "file"
              )
-
-text :: FromText a => ReadM a
-text = eitherReader (fromText . Text.pack)
-
-complete :: forall a f. (Data a, ToText a, HasCompleter f) => Mod f a
-complete = completeWith $
-    map (str . fromConstr) . dataTypeConstrs $ dataTypeOf val
-  where
-    val :: a
-    val = undefined
-
-    str :: a -> String
-    str = string
-
-string :: ToText a => a -> String
-string = Text.unpack . toText
