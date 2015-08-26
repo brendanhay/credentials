@@ -53,21 +53,30 @@ instance MonadAWS DynamoDB where
 instance Storage DynamoDB where
     type  Layer DynamoDB = AWS
     newtype Ref DynamoDB = TableName Text
-        deriving (Eq, Ord, Show, FromText, ToText, ToLog)
+        deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
-    layer     = runDynamo
-    setup     = setup'
-    cleanup   = cleanup'
-    list      = list'
-    insert    = insert'
-    select    = select'
-    delete    = delete'
+    layer        = runDynamo
+    setup        = setup'
+    cleanup      = cleanup'
+    list       r = safe r (list'       r)
+    insert n s r = safe r (insert' n s r)
+    select n v r = safe r (select' n v r)
+    delete n v r = safe r (delete' n v r)
 --    deleteAll = deleteAll
+
+-- FIXME:
+-- Switch to eventually consistent reads for 'select'
 
 type TableName = Ref DynamoDB
 
 defaultTable :: TableName
 defaultTable = TableName "credential-store"
+
+-- FIXME:
+-- This is a bit over specified due to the coarseness of _ResourceNotFound.
+safe t = handling_ _ResourceNotFoundException (throwM err)
+  where
+    err = StorageMissing ("Table " <> toText t <> " doesn't exist.")
 
 setup' :: MonadAWS m => TableName -> m Setup
 setup' t@(toText -> t') = do
