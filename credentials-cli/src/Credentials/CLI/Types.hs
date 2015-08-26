@@ -198,14 +198,22 @@ instance ToLog Output where
             JSON   -> encodeToByteStringBuilder (toJSON x)
             Shell  -> build x
 
+instance ToLog (Store, [(Name, NonEmpty Version)]) where
+    build (s, vs) = build s % ":\n" % build vs
+
 instance ToLog [(Name, NonEmpty Version)] where
     build = foldMap name
       where
         name (toBS -> n, v :| vs) =
-            "name: " % n % " -- version " % v % " [latest]\n" <> foldMap f vs
+            "  " % n % ":\n" % f v % " [latest]\n" % foldMap g vs
           where
-            f x = pad % " -- version " % x % "\n"
+            g x = f x % "\n"
+            f x = "    version: " % x
+
             pad = build (BS8.replicate (BS8.length n + 6) ' ')
+
+instance ToJSON (Store, [(Name, NonEmpty Version)]) where
+    toJSON (s, vs) = object [toText s .= vs]
 
 instance ToJSON [(Name, NonEmpty Version)] where
     toJSON = object . map (\(n, vs) -> toText n .= map toText (toList vs))

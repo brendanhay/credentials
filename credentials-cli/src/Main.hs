@@ -106,7 +106,7 @@ program r = \case
 
     List s f -> do
         xs <- list s
-        say (Output f xs)
+        say (Output f (s, xs))
 
     Put s k c n i -> do
         says ("Put " % n % " to " % s % ".")
