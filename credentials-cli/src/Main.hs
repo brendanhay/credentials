@@ -59,7 +59,8 @@ import           Options.Applicative          hiding (optional)
 import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, indent, (<+>), (</>))
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
+                                               (<+>), (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 default (Builder, Text)
@@ -118,7 +119,7 @@ program Common{region = r, store = s} = \case
 
     List -> do
         says ("Listing contents of " % s % " in " % r % "...")
-        list s >>= emit s
+        listAll s >>= emit s
         says "Done."
 
     Put k c n i -> do
@@ -128,22 +129,32 @@ program Common{region = r, store = s} = \case
         says "Done."
 
     Get c n v -> do
-        say "Retrieving "
+        say "Retrieving"
         case v of
             Nothing -> pure ()
-            Just x  -> say ("revision " % x)
-        says (" from " % s % " in " % r % "...")
+            Just x  -> say (" revision " % x % " of")
+        says (" " % n % " from " % s % " in " % r % "...")
         get c n v s >>= emit s . (n,)
         says "Done."
 
---     Delete s n v f -> do
---         says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
---         prompt f $ do
---             Store.delete n v s
---             says ("Deleted revision " % v % " of " % n % ".")
+    Delete n v f -> do
+        says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
+        prompt f $ do
+            delete n (Just v) s
+            emit s (n, v, "deleted" :: Text)
+            says ("Deleted revision " % v % " of " % n % ".")
+        says "Done."
+
+    Truncate n f -> do
+        says ("This will delete all but the latest revision of " % n % " from " % s % " in " % r % "!")
+        prompt f $ do
+            delete n Nothing s
+            emit s (n, "truncated" :: Text)
+            says ("Truncated " % n % ".")
+        says "Done."
 
 settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns 90)
+settings = prefs (showHelpOnError <> columns full)
 
 options :: ParserInfo (Common, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
@@ -155,12 +166,16 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
         [ mode "setup"
             (pure Setup)
             "Setup a new credential store."
-            "Foo "
+            "This will run the necessary actions to create a new credential store. \
+            \This action is idempotent and if the store already exists, \
+            \the operation will succeed with exit status 0."
 
         , mode "cleanup"
             (Cleanup <$> force)
             "Remove the credential store entirely."
-            "Bar"
+            "Warning: This will completely remove the credential store. For some \
+            \storage engines this action is irrevocable unless you specifically \
+            \perform backups for your data."
 
         , mode "list"
             (pure List)
@@ -168,32 +183,32 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             "The -u,--uri option takes a URI conforming to one of the following protocols"
 
         , mode "get"
-            (Get <$> context <*> require name <*> optional revision)
+            (Get <$> context <*> name <*> optional revision)
             "Fetch and decrypt a specific revision of a credential."
             "Defaults to the latest available revision, if --revision is not specified."
 
         , mode "put"
-            (Put <$> key <*> context <*> require name <*> input)
+            (Put <$> key <*> context <*> name <*> input)
             "Write and encrypt a new revision of a credential to the store."
-            "You can supply the secret as a string with --secret, or as \
-            \a file path to the secret's contents using --path."
+            "You can supply the secret value as a string with --secret, or as \
+            \a file path which contents' will be read by using --path."
 
         , mode "delete"
-            (Delete <$> require name <*> require revision <*> force)
+            (Delete <$> name <*> require revision <*> force)
             "Remove a specific revision of a credential from the store."
             "Foo"
 
         , mode "truncate"
-            (DeleteAll <$> optional name <*> retain <*> force)
+            (Truncate <$> name <*> force)
             "Remove multiple revisions of a credential from the store."
-            "If no credential name is specified, it will operate on all \
-            \credentials. Defaults to removing all but the latest revision."
+            "Removes all but the latest revision of the credential."
         ]
 
-mode :: String -> Parser a -> String -> Doc -> Mod CommandFields (Common, a)
-mode n p h foot = command n (info ((,) <$> common <*> p) desc)
+mode :: String -> Parser a -> Doc -> Text -> Mod CommandFields (Common, a)
+mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
-    desc = fullDesc <> progDesc h <> footerDoc (Just (indent 2 foot))
+    desc = progDescDoc (Just h)
+    foot = footerDoc   (Just $ indent 2 (wrap full f) <> hardline)
 
 common :: Parser Common
 common = Common
@@ -203,7 +218,7 @@ common = Common
         <> metavar "REGION"
         <> completes "The AWS region in which to operate."
              "The following regions are supported:"
-                 (map (second (PP.text . show) . join (,)) unsafeEnum)
+                 (map (,mempty) unsafeEnum)
              Frankfurt Nothing
          )
 
@@ -213,12 +228,12 @@ common = Common
         <> metavar "URI"
         <> defaults "URI specifying the storage system to use."
              "The URI format must be one of the following protocols:"
-                 [ ("dynamo:/[/host[:port]]/table-name", "Amazon DynamoDB")
-                 , ("s3:/[/host[:port]]/bucket-name[/prefix]", "Amazon S3")
+                 [ ("dynamo:/[/host[:port]]/table-name", "")
+                 , ("s3:/[/host[:port]]/bucket-name[/prefix]", "")
                  ]
              defaultStore
-             (Just $ "If no host is specified for AWS services (ie. scheme:/path),"
-                 </> "then the AWS endpoints will be used if appropriate.")
+             (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \
+                   \the AWS endpoints will be used if appropriate.")
          )
 
     <*> option text
@@ -273,18 +288,18 @@ context = ctx $ option text
         ) Optional
     )
 
-name :: Fact -> Parser Name
-name r = option text
+name :: Parser Name
+name = option text
      ( long "name"
     <> metavar "STRING"
-    <> describe "The unique name of the credential." Nothing r
+    <> describe "The unique name of the credential." Nothing Required
      )
 
 revision :: Fact -> Parser Revision
 revision r = option text
      ( long "revision"
     <> metavar "STRING"
-    <> describe "The revision of the secret." Nothing r
+    <> describe "The revision of the credential." Nothing r
      )
 
 force :: Parser Force
@@ -292,15 +307,6 @@ force = flag Prompt NoPrompt
      ( short 'f'
     <> long "force"
     <> help "Always overwrite or remove, without an interactive prompt."
-     )
-
-retain :: Parser Natural
-retain = option text
-     ( short 'k'
-    <> long "keep"
-    <> metavar "NUMBER"
-    <> help "Number of revisions to retain when truncating. [default: latest]"
-    <> value 1
      )
 
 input :: Parser Input
@@ -311,7 +317,7 @@ input = textual <|> filepath
              ( short 's'
             <> long "secret"
             <> metavar "STRING"
-            <> help "The unencrypted secret."
+            <> help "The unencrypted secret value of the credential."
              )
 
     filepath = Path
@@ -319,6 +325,6 @@ input = textual <|> filepath
              ( short 'p'
             <> long "path"
             <> metavar "PATH"
-            <> help "A file to read as the contents of the unencrypted secret."
+            <> help "A file to read as the contents of the unencrypted credential."
             <> action "file"
              )

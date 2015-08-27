@@ -15,7 +15,7 @@ send() {
     local mode="$1"
     local args="$2"
 
-    credentials $mode -r $region -u $store $args
+    credentials $mode -r $region -u $store $args --format echo
 }
 
 gets() {
@@ -23,12 +23,12 @@ gets() {
     local expect="$2"
     local context="$3"
 
-    local actual="$(credentials get -r $region -u $store --name $name $context)"
+    local actual="$(credentials get -r $region -u $store --name $name $context --format echo)"
 
     if [ "$expect" != "$actual" ]; then
         send "list"
         echo "Test failed for $name, expected: $expect, actual: $actual"
-        send "get" "-l debug --name $name $context --format json"
+        send "get" "-l debug --name $name $context"
         echo ""
         exit 1
     fi
@@ -40,7 +40,7 @@ puts() {
     local secret="$3"
     local context="$4"
 
-    local revision=$(credentials put -r $region -u $store --name $name -s "$secret" $context)
+    local revision=$(credentials put -r $region -u $store --name $name -s "$secret" $context --format echo)
     gets "$name" "$secret" "$context"
 
     eval $__revision="'$revision'"

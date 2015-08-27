@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE RankNTypes                 #-}
@@ -32,7 +33,6 @@ import           Control.Retry
 import           Credentials
 import           Credentials.DynamoDB.Val
 import           "cryptonite" Crypto.Hash
--- import           Data.ByteArray
 import           Data.ByteArray.Encoding
 import qualified Data.ByteString          as BS
 import           Data.Conduit             hiding (await)
@@ -64,11 +64,10 @@ instance Storage DynamoDB where
     layer        = runDynamo
     setup        = setup'
     cleanup      = cleanup'
-    list       r = safe r (listTable       r)
+    listAll    r = safe r (listAll'    r)
     insert n s r = safe r (insert' n s r)
-    select n v r = snd <$> safe r (select' n v r)
+    select n v r = safe r (select' n v r <&> snd)
     delete n v r = safe r (delete' n v r)
---    deleteAll = deleteAll
 
 type TableName = Ref DynamoDB
 
@@ -110,19 +109,15 @@ cleanup' t@(toText -> t') = do
         void $ send (deleteTable t')
         void $ await tableNotExists (describeTable t')
 
-listTable :: (MonadCatch m, MonadAWS m)
-      => TableName
-      -> m [(Name, NonEmpty Revision)]
-listTable t =
-    paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
+listAll' :: (MonadCatch m, MonadAWS m)
+         => TableName
+         -> m [(Name, NonEmpty Revision)]
+listAll' t = paginate (mkScan t)
+    =$= CL.concatMapM (traverse fromVal . view srsItems)
+    =$= CL.groupOn1 fst
+    =$= CL.map group
+     $$ CL.consume
   where
-    result = CL.concatMapM (traverse fromVal . view srsItems)
-         =$= CL.groupOn1 fst
-         =$= CL.map group
-         =$= CL.consume
-
-    fields = nameField :| [versionField, revisionField]
-
     group ((k, r), rs) = (k, desc (r :| map snd rs))
 
     desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
@@ -167,15 +162,36 @@ select' n mr t = send (mkNamed n t & revision mr) >>= result
         . (qKeyConditions  <>~ equals r)
         . (qConsistentRead ?~ True)
 
+-- FIXME: revisit
 delete' :: MonadAWS m
         => Name
-        -> Revision
+        -> Maybe Revision
         -> TableName
         -> m ()
-delete' n r t = do
-    (v, _) <- select' n (Just r) t
-    void . send $
-        deleteItem (toText t) & diKey .~ toVal n <> toVal v
+delete' n r t =
+    case r of
+        Just x  -> do
+            (v, _) <- select' n (Just x) t
+            void . send $
+                deleteItem (toText t) & diKey .~ toVal n <> toVal v
+
+        Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
+          where
+            qry = mkNamed n t
+                & qAttributesToGet  ?~ nameField :| [versionField]
+                & qScanIndexForward ?~ True
+                & qLimit            ?~ 25
+
+            del []     = return ()
+            del (x:ys) = void . send $ batchWriteItem
+                & bwiRequestItems .~ [(toText t, f x :| map f xs)]
+              where
+                f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
+
+                xs | n < 24    = take (n - 1) ys
+                   | otherwise = ys
+                  where
+                    n = length ys
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
@@ -191,6 +207,10 @@ exists :: MonadAWS m => TableName -> m Bool
 exists t = paginate listTables
     =$= CL.concatMap (view ltrsTableNames)
      $$ (isJust <$> findC (== toText t))
+
+mkScan :: TableName -> Scan
+mkScan t = scan (toText t)
+    & sAttributesToGet ?~ nameField :| [versionField, revisionField]
 
 mkNamed :: Name -> TableName -> Query
 mkNamed n t = query (toText t)

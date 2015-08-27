@@ -69,6 +69,7 @@ import           Options.Applicative.Builder.Internal (HasCompleter)
 import           System.Exit
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen         (Doc, Pretty)
+import qualified Text.PrettyPrint.ANSI.Leijen         as PP
 import           URI.ByteString
 
 data Fact
@@ -91,12 +92,12 @@ data Input
 
 data Mode
     = Setup
-    | Cleanup   !Force
+    | Cleanup  !Force
     | List
-    | Put       !KeyId        !Context  !Name             !Input
-    | Get       !Context      !Name     !(Maybe Revision)
-    | Delete    !Name         !Revision !Force
-    | DeleteAll !(Maybe Name) !Natural  !Force
+    | Put      !KeyId   !Context  !Name             !Input
+    | Get      !Context !Name     !(Maybe Revision)
+    | Delete   !Name    !Revision !Force
+    | Truncate !Name    !Force
 
 data Format
     = Pretty
@@ -141,28 +142,25 @@ instance Storage App where
     layer = unApp
 
     setup = \case
-        Table _ t -> wrap (setup t)
+        Table _ t -> run (setup t)
 
     cleanup = \case
-        Table _ t -> wrap (cleanup t)
+        Table _ t -> run (cleanup t)
 
-    list = \case
-        Table _ t -> wrap (list t)
+    listAll = \case
+        Table _ t -> run (listAll t)
 
     insert n s = \case
-        Table _ t -> wrap (insert n s t)
+        Table _ t -> run (insert n s t)
 
     select n v = \case
-        Table _ t -> wrap (select n v t)
+        Table _ t -> run (select n v t)
 
     delete n v = \case
-        Table _ t -> wrap (delete n v t)
+        Table _ t -> run (delete n v t)
 
-    deleteAll n = \case
-        Table _ t -> wrap (deleteAll n t)
-
---wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
-wrap = App . lift . layer
+run :: DynamoDB a -> App a
+run = App . lift . layer
 
 runApp :: Env -> Common -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
@@ -172,9 +170,9 @@ type Store = Ref App
 defaultStore :: Store
 defaultStore = Table uri defaultTable
   where
-    uri    = URI scheme (Just auth) ("/" <> toBS defaultTable) mempty Nothing
-    scheme = Scheme "dynamo"
-    auth   = Authority Nothing (Host "localhost") (Just (Port 8000))
+    uri  = URI dyn (Just auth) ("/" <> toBS defaultTable) mempty Nothing
+    dyn  = Scheme "dynamo"
+    auth = Authority Nothing (Host "localhost") (Just (Port 8000))
 
 setStore :: HasEnv a => Common -> a -> a
 setStore c = configure f

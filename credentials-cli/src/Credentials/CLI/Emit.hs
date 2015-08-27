@@ -49,8 +49,8 @@ import           Data.Foldable                        (foldMap)
 import           Data.HashMap.Strict                  (HashMap)
 import           Data.HashMap.Strict                  (HashMap)
 import qualified Data.HashMap.Strict                  as Map
-import           Data.List                            (foldl', sort)
-import           Data.List                            (intersperse)
+import           Data.List                            (foldl', intersperse,
+                                                       sort)
 import           Data.List.NonEmpty                   (NonEmpty (..))
 import           Data.List.NonEmpty                   (NonEmpty (..))
 import           Data.Maybe
@@ -72,6 +72,8 @@ import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen         (Doc, Pretty)
 import           URI.ByteString
 
+-- FIXME: Give types to the output rather the tuple-itis.
+
 type Revisions = [(Name, NonEmpty Revision)]
 
 data Emit a = Emit { multiline :: !Bool, expose :: a }
@@ -82,7 +84,7 @@ instance ToText a => ToText (Emit a) where
 instance ToLog (Emit a) => ToLog (Emit (Store, a)) where
     build (Emit p (s, x)) = title % build (Emit p x)
       where
-        title | p         = build s % ":\n  "
+        title | p         = build s % ":\n"
               | otherwise = mempty
 
 instance ToLog (Emit Text)     where build = build . toText
@@ -90,16 +92,26 @@ instance ToLog (Emit Setup)    where build = build . toText
 instance ToLog (Emit Revision) where build = build . toText
 
 instance ToLog (Emit Revisions) where
-    build (Emit p rs) = foldMap name rs
+    build (Emit p rs) = go rs
       where
-        name (n, v :| vs) =
-            "" % n % ":" % pad % v % " [latest]" % foldMap (pad %) vs
-          where
-            pad | p         = "\n    - "
-                | otherwise = "\n  - "
+        go []     = mempty
+        go [x]    = line x
+        go (x:xs) = line x <> "\n" <> go xs
+
+        line (n, v :| vs) =
+            x % n % ":" % y % v % " # latest" % foldMap (y %) vs
+
+        (x, y) | p         = ("  ", "\n    ")
+               | otherwise = ("",   "\n  ")
 
 instance ToLog (Emit (Name, (Value, Revision))) where
-    build = build . snd . snd . expose
+    build = mappend "  " . build . toBS . fst . snd . expose
+
+instance ToLog (Emit (Name, Revision, Text)) where
+    build (Emit _ (_, r, _)) = "  " <> build r
+
+instance ToLog (Emit (Name, Text)) where
+    build = mappend "  " . build . snd . expose
 
 instance ToJSON (Emit a) => ToJSON (Emit (Store, a)) where
    toJSON (Emit p (s, x)) = object [toText s .= Emit p x]
@@ -118,4 +130,17 @@ instance ToJSON (Emit (Name, (Value, Revision))) where
         [ "name"     .= toText n
         , "revision" .= toText r
         , "secret"   .= Text.decodeUtf8 (toBS v)
+        ]
+
+instance ToJSON (Emit (Name, Revision, Text)) where
+    toJSON (Emit _ (n, r, s)) = object
+        [ "name"     .= toText n
+        , "revision" .= toText r
+        , "status"   .= s
+        ]
+
+instance ToJSON (Emit (Name, Text)) where
+    toJSON (Emit _ (n, s)) = object
+        [ "name"   .= toText n
+        , "status" .= s
         ]

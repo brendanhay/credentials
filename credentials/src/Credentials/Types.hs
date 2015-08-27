@@ -111,15 +111,14 @@ class Storage m where
     type Layer m :: * -> *
     data Ref   m :: *
 
-    layer     :: m a -> Layer m a
+    layer   :: m a -> Layer m a
 
-    setup     ::                           Ref m -> m Setup
-    cleanup   ::                           Ref m -> m ()
-    list      ::                           Ref m -> m [(Name, NonEmpty Revision)]
-    insert    :: Name -> Secret         -> Ref m -> m Revision
-    select    :: Name -> Maybe Revision -> Ref m -> m (Secret, Revision)
-    delete    :: Name -> Revision       -> Ref m -> m ()
-    deleteAll :: Name                   -> Ref m -> m ()
+    setup   ::                           Ref m -> m Setup
+    cleanup ::                           Ref m -> m ()
+    listAll ::                           Ref m -> m [(Name, NonEmpty Revision)]
+    insert  :: Name -> Secret         -> Ref m -> m Revision
+    select  :: Name -> Maybe Revision -> Ref m -> m (Secret, Revision)
+    delete  :: Name -> Maybe Revision -> Ref m -> m ()
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
