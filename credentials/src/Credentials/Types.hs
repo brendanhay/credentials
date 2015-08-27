@@ -51,19 +51,16 @@ defaultKeyId = KeyId "alias/credential-store"
 newtype Name = Name Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
+-- | An opaque (non-monotonic, potential gaps) revision number.
+newtype Revision = Revision ByteString
+    deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
+
 -- | An unencrypted secret value.
 newtype Value = Value ByteString
     deriving (Eq, Ord, FromText, ToByteString)
 
 instance Show Value where
     show = const "Value *****"
-
--- | An incrementing version number.
-newtype Version = Version Natural
-    deriving (Eq, Ord, Num, Show, FromText, ToText, ToByteString)
-
-instance ToLog Version where
-    build (Version n) = build (toInteger n)
 
 -- | An encryption context.
 newtype Context = Context { context :: HashMap Text Text }
@@ -113,13 +110,13 @@ class Storage m where
 
     layer     :: m a -> Layer m a
 
-    setup     ::                          Ref m -> m Setup
-    cleanup   ::                          Ref m -> m ()
-    list      ::                          Ref m -> m [(Name, NonEmpty Version)]
-    insert    :: Name -> Secret        -> Ref m -> m Version
-    select    :: Name -> Maybe Version -> Ref m -> m (Secret, Version)
-    delete    :: Name -> Version       -> Ref m -> m ()
-    deleteAll :: Name                  -> Ref m -> m ()
+    setup     ::                           Ref m -> m Setup
+    cleanup   ::                           Ref m -> m ()
+    list      ::                           Ref m -> m [(Name, NonEmpty Revision)]
+    insert    :: Name -> Secret         -> Ref m -> m Revision
+    select    :: Name -> Maybe Revision -> Ref m -> m (Secret, Revision)
+    delete    :: Name -> Revision       -> Ref m -> m ()
+    deleteAll :: Name                   -> Ref m -> m ()
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
@@ -143,11 +140,11 @@ data CredentialError
     | FieldInvalid Text Text
       -- ^ Unable to parse field from the storage engine.
 
-    | SecretMissing Name Text
+    | SecretMissing Name (Maybe Revision) Text
       -- ^ Secret with the specified name cannot found.
 
-    | OptimisticLockFailure Name Version Text
-      -- ^ Attempting to insert a version that (already, or now) exists.
+    | OptimisticLockFailure Name Revision Text
+      -- ^ Attempting to insert a revision that (already, or now) exists.
 
       deriving (Eq, Show, Typeable)
 

@@ -28,44 +28,51 @@ gets() {
     if [ "$expect" != "$actual" ]; then
         send "list"
         echo "Test failed for $name, expected: $expect, actual: $actual"
-        send "get" "--name $name $context --format json"
+        send "get" "-l debug --name $name $context --format json"
         echo ""
         exit 1
     fi
 }
 
 puts() {
-    local name="$1"
-    local secret="$2"
-    local context="$3"
+    local __revision=$1
+    local name="$2"
+    local secret="$3"
+    local context="$4"
 
-    credentials put -r $region -u $store --name $name -s "$secret" $context
+    local revision=$(credentials put -r $region -u $store --name $name -s "$secret" $context)
     gets "$name" "$secret" "$context"
+
+    eval $__revision="'$revision'"
 }
 
 send "cleanup" "-f"
 send "setup"
 
-echo 'Put series'
+echo "Put series ..."
 
-puts "foo" "secret"
-puts "foo" "not so secret"
-puts "foo" "something"
-puts "foo" "bother"
+puts foo1 "foo" "secret"
+puts foo2 "foo" "not so secret"
+puts foo3 "foo" "something"
+puts foo4 "foo" "bother"
+puts bar1 "bar" "rah rah rah"
+puts bar2 "bar" "nothing"
+puts baz1 "baz" "supercalifragilistic"
+puts baz2 "baz" "anything"
 
-echo 'Delete revision 3'
+echo "Delete revision $foo3"
 
-send "delete" "--name foo --revision 3 -f"
+send "delete" "--name foo --revision $foo3 -f"
 gets "foo" "bother"
 
-echo 'Delete revision 4'
+echo "Delete revision $foo4"
 
-send "delete" "--name foo --revision 4 -f"
+send "delete" "--name foo --revision $foo4 -f"
 gets "foo" "not so secret"
 
-echo 'Put with context'
+echo "Put with context ..."
 
-puts "bar" "longer secret" "-c a=b -c this=notthis"
+puts bar3 "bar" "longer secret '-c a=b -c this=notthis'"
 
 send "list"
 

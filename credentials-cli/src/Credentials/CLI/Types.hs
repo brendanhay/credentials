@@ -84,7 +84,7 @@ data Format
     = Pretty
     | JSON
     | Shell
-      deriving (Data, Show)
+      deriving (Eq, Show)
 
 instance ToText Format where
     toText = \case
@@ -103,20 +103,20 @@ data Mode
     = Setup     !Store
     | Cleanup   !Store !Force
     | List      !Store !Format
-    | Put       !Store !KeyId        !Context !Name !Input
-    | Get       !Store               !Context !Name !(Maybe Version) !Format
-    | Delete    !Store !Name         !Version !Force
+    | Put       !Store !KeyId        !Context !Name !Input            !Format
+    | Get       !Store               !Context !Name !(Maybe Revision) !Format
+    | Delete    !Store !Name         !Revision !Force
     | DeleteAll !Store !(Maybe Name) !Natural !Force
 
 current :: Mode -> Store
 current = \case
-    Setup     s         -> s
-    Cleanup   s _       -> s
-    List      s _       -> s
-    Put       s _ _ _ _ -> s
-    Get       s _ _ _ _ -> s
-    Delete    s _ _ _   -> s
-    DeleteAll s _ _ _   -> s
+    Setup     s           -> s
+    Cleanup   s _         -> s
+    List      s _         -> s
+    Put       s _ _ _ _ _ -> s
+    Get       s _ _ _ _   -> s
+    Delete    s _ _ _     -> s
+    DeleteAll s _ _ _     -> s
 
 newtype App a = App { unApp :: AWS a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
@@ -210,34 +210,43 @@ instance ToLog Output where
             JSON   -> encodeToByteStringBuilder (toJSON x)
             Shell  -> build x
 
-instance ToLog (Store, [(Name, NonEmpty Version)]) where
+instance ToLog (Store, [(Name, NonEmpty Revision)]) where
     build (s, vs) = build s % ":\n" % build vs
 
-instance ToLog [(Name, NonEmpty Version)] where
+instance ToLog [(Name, NonEmpty Revision)] where
     build = foldMap name
       where
         name (toBS -> n, v :| vs) =
             "  " % n % ":\n" % f v % " [latest]\n" % foldMap g vs
           where
             g x = f x % "\n"
-            f x = "    version: " % x
+            f x = "    revision: " % x
 
             pad = build (BS8.replicate (BS8.length n + 6) ' ')
 
-instance ToJSON (Store, [(Name, NonEmpty Version)]) where
+instance ToJSON (Store, [(Name, NonEmpty Revision)]) where
     toJSON (s, vs) = object [toText s .= vs]
 
-instance ToJSON [(Name, NonEmpty Version)] where
+instance ToJSON [(Name, NonEmpty Revision)] where
     toJSON = object . map (\(n, vs) -> toText n .= map toText (toList vs))
 
-instance ToLog (Name, (Value, Version)) where
+instance ToLog (Name, (Value, Revision)) where
     build (_, (Value x, _)) = build x
 
-instance ToJSON (Name, (Value, Version)) where
+instance ToJSON (Name, (Value, Revision)) where
     toJSON (n, (x, v)) = object
-        [ "name"    .= toText n
-        , "version" .= toText v
-        , "secret"  .= toText (toBS x)
+        [ "name"     .= toText n
+        , "revision" .= toText v
+        , "secret"   .= toText (toBS x)
+        ]
+
+instance ToLog (Name, Revision) where
+    build (_, v) = build v
+
+instance ToJSON (Name, Revision) where
+    toJSON (n, v) = object
+        [ "name"     .= toText n
+        , "revision" .= toText v
         ]
 
 data Pair = Pair Text Text
@@ -264,48 +273,6 @@ instance FromText LogLevel where
 
 instance ToText LogLevel where
     toText = Text.toLower . Text.pack . show
-
--- class Help a where
---     initial  :: a
---     document :: Proxy a -> [(Text, Maybe Doc)]
-
--- instance Help Region where
---     initial  = Frankfurt
---     document = map ((,Nothing) . toText) . unsafeEnum
-
--- instance Help Format where
---     initial  = Shell
---     document = values
---         [ (Pretty, Just "foo")
---         , (JSON,   Just "bar")
---         , (Shell,  Just "quz")
---         ]
-
--- instance Help LogLevel where
---     initial  = Info
---     document = values
---         [ (Error, Nothing)
---         , (Debug, Nothing)
---         , (Trace, Nothing)
---         ]
-
--- instance Help Store where
---     initial  = defaultStore
---     document = const
---         [ ("dynamo://[host[:port]]/table-name",       Nothing)
---         , ("s3://[host[:port]]/bucket-name[/prefix]", Nothing)
---         ]
-
--- instance Help KeyId where
---     intiial  = defaultKeyId
---     document = const []
-
--- annotated :: forall a. Help a => Proxy a -> [(Doc, Maybe Doc)]
--- annotated = map (first (fromString . string)) . document
-
--- values :: ToText a => [(a, b)] -> c -> [(Text, b)]
--- values = const . map (first toText)
-          --
 
 unsafeEnum :: forall a. (Ord a, Data a, ToText a) => [a]
 unsafeEnum = sort . map fromConstr . dataTypeConstrs $ dataTypeOf val

@@ -1,11 +1,12 @@
-{-# LANGUAGE DefaultSignatures      #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE OverloadedLists        #-}
-{-# LANGUAGE OverloadedStrings      #-}
-{-# LANGUAGE RankNTypes             #-}
-{-# LANGUAGE ScopedTypeVariables    #-}
-{-# LANGUAGE ViewPatterns           #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Credentials.DynamoDB.Val
@@ -31,12 +32,20 @@ import qualified Data.Text            as Text
 import           Network.AWS.Data
 import           Network.AWS.DynamoDB
 
+-- | The DynamoDB field used for optimistic locking.
+newtype Version = Version Integer
+    deriving (Eq, Ord, Num, FromText, ToText, ToByteString)
+
 equals :: Val a => a -> HashMap Text Condition
 equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toVal
 
-nameField, versionField :: Text
-nameField    = name (Proxy :: Proxy Name)
-versionField = name (Proxy :: Proxy Version)
+revisionIndex :: Text
+revisionIndex = revisionField
+
+nameField, revisionField, versionField :: Text
+nameField     = name (Proxy :: Proxy Name)
+revisionField = name (Proxy :: Proxy Revision)
+versionField  = name (Proxy :: Proxy Version)
 
 class Val a where
     toVal   :: a -> HashMap Text AttributeValue
@@ -60,6 +69,7 @@ instance Val Secret where
 
 instance Val Name
 instance Val Version
+instance Val Revision
 instance Val Key
 instance Val Cipher
 instance Val HMAC256
@@ -67,11 +77,12 @@ instance Val HMAC256
 class IsField a b | a -> b where
     field :: Field a b
 
-instance IsField Name    Text       where field = Field "name"     avS text
-instance IsField Version Text       where field = Field "version"  avN text
-instance IsField Key     ByteString where field = Field "key"      avB (bytes Key)
-instance IsField Cipher  ByteString where field = Field "contents" avB (bytes Cipher)
-instance IsField HMAC256 ByteString where field = Field "hmac"     avB (bytes Hex)
+instance IsField Name     Text       where field = Field "name"     avS text
+instance IsField Version  Text       where field = Field "version"  avN text
+instance IsField Revision ByteString where field = Field "revision" avB (bytes Revision)
+instance IsField Key      ByteString where field = Field "key"      avB (bytes Key)
+instance IsField Cipher   ByteString where field = Field "contents" avB (bytes Cipher)
+instance IsField HMAC256  ByteString where field = Field "hmac"     avB (bytes Hex)
 
 data Field a b = Field Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
 

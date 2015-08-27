@@ -50,7 +50,7 @@ put :: (MonadThrow m, MonadAWS m, Storage m, Typeable m)
     -> Name
     -> Value
     -> Ref m
-    -> m Version
+    -> m Revision
 put k c n x r = do
     s <- encrypt k c n x
     insert n s r
@@ -58,9 +58,9 @@ put k c n x r = do
 get :: (MonadThrow m, MonadAWS m, Storage m)
     => Context
     -> Name
-    -> Maybe Version
+    -> Maybe Revision
     -> Ref m
-    -> m (Value, Version)
+    -> m (Value, Revision)
 get c n mv r = do
     (s, v) <- select  n mv r
     x      <- decrypt c n s

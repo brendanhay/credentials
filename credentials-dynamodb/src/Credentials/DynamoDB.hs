@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
@@ -30,6 +31,10 @@ import           Control.Monad.IO.Class
 import           Control.Retry
 import           Credentials
 import           Credentials.DynamoDB.Val
+import           "cryptonite" Crypto.Hash
+-- import           Data.ByteArray
+import           Data.ByteArray.Encoding
+import qualified Data.ByteString          as BS
 import           Data.Conduit             hiding (await)
 import qualified Data.Conduit             as C
 import qualified Data.Conduit.List        as CL
@@ -39,6 +44,7 @@ import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Ord
 import           Data.Text                (Text)
+import           Data.Time.Clock.POSIX
 import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
@@ -60,12 +66,9 @@ instance Storage DynamoDB where
     cleanup      = cleanup'
     list       r = safe r (list'       r)
     insert n s r = safe r (insert' n s r)
-    select n v r = safe r (select' n v r)
+    select n v r = snd <$> safe r (select' n v r)
     delete n v r = safe r (delete' n v r)
 --    deleteAll = deleteAll
-
--- FIXME:
--- Switch to eventually consistent reads for 'select'
 
 type TableName = Ref DynamoDB
 
@@ -82,14 +85,21 @@ setup' :: MonadAWS m => TableName -> m Setup
 setup' t@(toText -> t') = do
     p <- exists t
     unless p $ do
-        let keys = keySchemaElement nameField    Hash
+        let iops = provisionedThroughput 1 1
+            keys = keySchemaElement nameField    Hash
                :| [keySchemaElement versionField Range]
-            iops = provisionedThroughput 1 1
             attr = ctAttributeDefinitions .~
-                [ attributeDefinition nameField    S
-                , attributeDefinition versionField N
+                [ attributeDefinition nameField     S
+                , attributeDefinition versionField  N
+                , attributeDefinition revisionField B
                 ]
-        void $ send (createTable t' keys iops & attr)
+            secn = ctLocalSecondaryIndexes .~
+                [ localSecondaryIndex revisionIndex
+                    (keySchemaElement nameField Hash
+                        :| [keySchemaElement revisionField Range])
+                    (projection & pProjectionType ?~ All)
+                ]
+        void $ send (createTable t' keys iops & attr & secn)
         void $ await tableExists (describeTable t')
     return $ if p then Exists else Created
 
@@ -102,7 +112,7 @@ cleanup' t@(toText -> t') = do
 
 list' :: (MonadCatch m, MonadAWS m)
       => TableName
-      -> m [(Name, NonEmpty Version)]
+      -> m [(Name, NonEmpty Revision)]
 list' t =
     paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
   where
@@ -111,26 +121,27 @@ list' t =
          =$= CL.map group
          =$= CL.consume
 
-    fields = nameField :| [versionField]
+    fields = nameField :| [versionField, revisionField]
 
-    group ((k, v), map snd -> vs) = (k, desc (v :| vs))
+    group ((k, r), rs) = (k, desc (r :| map snd rs))
 
-    desc = NE.sortOn Down
+    desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
+    desc = NE.map snd . NE.sortOn (Down . fst)
 
 insert' :: (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
         => Name
         -> Secret
         -> TableName
-        -> m Version
+        -> m Revision
 insert' n s t = recovering policy [const cond] write
   where
     write = do
         v <- maybe 1 (+1) <$> latest n t
-        let x = toVal v
+        r <- mkRevision v
         void . send $ putItem (toText t)
-            & piItem     .~ toVal n <> x <> toVal s
-            & piExpected .~ Map.map (const expect) x
-        return v
+            & piItem     .~ toVal n <> toVal v <> toVal r <> toVal s
+            & piExpected .~ Map.map (const expect) (toVal v <> toVal r)
+        return r
 
     cond = handler_ _ConditionalCheckFailedException (return True)
 
@@ -140,31 +151,38 @@ insert' n s t = recovering policy [const cond] write
 
 select' :: (MonadThrow m, MonadAWS m)
         => Name
-        -> Maybe Version
+        -> Maybe Revision
         -> TableName
-        -> m (Secret, Version)
-select' n v t = send (named n t & version v) >>= result
+        -> m (Version, (Secret, Revision))
+select' n mr t = send (mkNamed n t & revision mr) >>= result
   where
     result  = maybe missing fromVal . listToMaybe . view qrsItems
-    missing = throwM $ SecretMissing n (toText t)
+    missing = throwM $ SecretMissing n mr (toText t)
 
-    version Nothing  = id
-    version (Just x) = qKeyConditions <>~ equals x
+    -- If revision is specified, the revisionIndex is used and
+    -- a consistent read is done.
+    revision Nothing  = id
+    revision (Just r) =
+          (qIndexName      ?~ revisionIndex)
+        . (qKeyConditions  <>~ equals r)
+        . (qConsistentRead ?~ True)
 
 delete' :: MonadAWS m
         => Name
-        -> Version
+        -> Revision
         -> TableName
         -> m ()
-delete' n v t = void . send $
-    deleteItem (toText t) & diKey .~ toVal n <> toVal v
+delete' n r t = do
+    (v, _) <- select' n (Just r) t
+    void . send $
+        deleteItem (toText t) & diKey .~ toVal n <> toVal v
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
        -> TableName
        -> m (Maybe Version)
 latest n t = do
-    rs <- send (named n t)
+    rs <- send (mkNamed n t & qConsistentRead ?~ True)
     case listToMaybe (rs ^. qrsItems) of
         Nothing -> pure Nothing
         Just  m -> Just <$> fromVal m
@@ -174,12 +192,19 @@ exists t = paginate listTables
     =$= CL.concatMap (view ltrsTableNames)
      $$ (isJust <$> findC (== toText t))
 
-named :: Name -> TableName -> Query
-named n t = query (toText t)
+mkNamed :: Name -> TableName -> Query
+mkNamed n t = query (toText t)
     & qLimit            ?~ 1
     & qScanIndexForward ?~ False
-    & qConsistentRead   ?~ True
+    & qConsistentRead   ?~ False
     & qKeyConditions    .~ equals n
+
+mkRevision :: MonadIO m => Version -> m Revision
+mkRevision v = do
+    ts <- liftIO getPOSIXTime
+    let d = hash (toBS (show ts) <> toBS v) :: Digest SHA1
+        r = BS.take 7 (convertToBase Base16 d)
+    return $! Revision r
 
 findC :: Monad m => (a -> Bool) -> Consumer a m (Maybe a)
 findC f = loop

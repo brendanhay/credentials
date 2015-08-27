@@ -45,8 +45,8 @@ import           Options.Applicative          hiding (optional)
 import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
-                                               (<+>), (</>))
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, brackets, hardline,
+                                               indent, tupled, (<+>), (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 -- | Setup an option with formatted help text.
@@ -68,27 +68,28 @@ describe title body r = helpDoc . Just $ title <> doc <> hardline
 
 -- | Setup a tabular list of possible values for an option,
 -- a default value, and an auto-completer.
-tabular :: ToText a
-        => Doc        -- ^ The options' description.
-        -> Doc        -- ^ A title for the values.
-        -> [(a, Doc)] -- ^ Possible values and their documentation.
-        -> a          -- ^ A default value.
-        -> Maybe Doc  -- ^ Footer contents.
-        -> Mod OptionFields a
-tabular title note xs x foot = doc <> value x <> completeWith (map fst ys)
+completes :: ToText a
+          => Doc        -- ^ The options' description.
+          -> Doc        -- ^ A title for the values.
+          -> [(a, Doc)] -- ^ Possible values and their documentation.
+          -> a          -- ^ A default value.
+          -> Maybe Doc  -- ^ Footer contents.
+          -> Mod OptionFields a
+completes title note xs x foot = doc <> completeWith (map fst ys)
   where
-    doc = defaults title note ys def foot
-    def = toText x
+    doc = defaults title note ys x foot
     ys  = map (first string) xs
 
 -- | Construct a tabular representation displaying the default values,
--- without using ToText.
--- defaults :: Doc
---          -> [(String, Doc)]
---          -> String
---          -> Maybe Doc
---          -> Doc
-defaults title note xs x foot = describe title (Just doc) Default
+-- without using ToText for the tabular values.
+defaults :: ToText a
+         => Doc
+         -> Doc
+         -> [(String, Doc)]
+         -> a
+         -> Maybe Doc
+         -> Mod OptionFields a
+defaults title note xs x foot = describe title (Just doc) Default <> value x
   where
     doc = maybe id (flip (PP.<$>)) foot $ note
         PP.<$> indent 2 rows
@@ -98,7 +99,7 @@ defaults title note xs x foot = describe title (Just doc) Default
          | r:rs <- xs = foldl' (PP.<$>) (sep r) (map sep rs)
          | otherwise  = mempty
       where
-        sep (k, v) = "-" <+> bold (PP.text k) <+> indent (len - length k) v
+        sep (k, v) = "-" <+> bold (PP.text k) <+> indent (len - length k) (tupled [v])
 
     len = maximum (map (length . fst) xs)
 

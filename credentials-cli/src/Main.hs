@@ -63,18 +63,31 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 default (Builder, Text)
 
 -- Deleting:
---   how about tombstones, or some thought out plan for how the version number
+--   how about tombstones, or some thought out plan for how the revision number
 --   semantics are impacted by deletes.
 
---   Some opaque version format returned?
---     sha (version + timestamp)?
+--   Some opaque revision format returned?
+--     sha (revision + timestamp)?
 
 -- Large File Storage:
 --   have a pointer to something in S3, or actually store everything there?
---   is S3's versioning enough?
+--   is S3's revisioning enough?
+
+-- Is Revision a better name than Revision due to the opaqueness?
+
+-- An optional comment for revisions?
 
 -- Val:
 --   rename to Table -> Item -> Attribute
+
+-- Do the same formatting/pprint of mode progDesc to layout the main
+-- credentials help view.
+
+-- BUG:
+-- when printing the store URI:
+--  dynamo:///name -> dynamo:/name
+
+-- Add ability to single line shell, or normal verbosity.
 
 main :: IO ()
 main = do
@@ -104,26 +117,26 @@ program r = \case
         xs <- list s
         say (Output f (s, xs))
 
-    Put s k c n i -> do
-        says ("Put " % n % " to " % s % ".")
+    Put s k c n i f -> do
         x <- case i of
             Raw  v -> pure v
             Path p -> do
-                says ("Reading secret from " % p % "...")
+                when (f == Shell) $
+                    says ("Reading secret from " % p % "...")
                 Value <$> liftIO (BS.readFile p)
 
         v <- Store.put k c n x s
-        says ("Wrote version " % v % " of " % n % ".")
+        say (Output f (n, v))
 
     Get s c n v f -> do
         x <- Store.get c n v s
         say (Output f (n, x))
 
     Delete s n v f -> do
-        says ("This will delete version " % v % " of " % n % " from " % s % " in " % r % "!")
+        says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
         prompt f $ do
             Store.delete n v s
-            says ("Deleted version " % v % " of " % n % ".")
+            says ("Deleted revision " % v % " of " % n % ".")
 
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 90)
@@ -147,30 +160,30 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
 
         , mode "list"
             (List <$> store <*> format)
-            "List all credential names and their respective versions."
+            "List all credential names and their respective revisions."
             "The -u,--uri option takes a URI conforming to one of the following protocols"
 
         , mode "get"
-            (Get <$> store <*> context <*> require name <*> optional version <*> format)
-            "Fetch and decrypt a specific version of a credential."
-            "Defaults to the latest available version, if --version is not specified."
+            (Get <$> store <*> context <*> require name <*> optional revision <*> format)
+            "Fetch and decrypt a specific revision of a credential."
+            "Defaults to the latest available revision, if --revision is not specified."
 
         , mode "put"
-            (Put <$> store <*> key <*> context <*> require name <*> input)
-            "Write and encrypt a new version of a credential to the store."
+            (Put <$> store <*> key <*> context <*> require name <*> input <*> format)
+            "Write and encrypt a new revision of a credential to the store."
             "You can supply the secret as a string with --secret, or as \
             \a file path to the secret's contents using --path."
 
         , mode "delete"
-            (Delete <$> store <*> require name <*> require version <*> force)
-            "Remove a specific version of a credential from the store."
+            (Delete <$> store <*> require name <*> require revision <*> force)
+            "Remove a specific revision of a credential from the store."
             "Foo"
 
         , mode "truncate"
             (DeleteAll <$> store <*> optional name <*> retain <*> force)
-            "Remove multiple versions of a credential from the store."
+            "Remove multiple revisions of a credential from the store."
             "If no credential name is specified, it will operate on all \
-            \credentials. Defaults to removing all but the latest version."
+            \credentials. Defaults to removing all but the latest revision."
         ]
 
 mode :: String
@@ -187,7 +200,7 @@ region = option text
      ( short 'r'
     <> long "region"
     <> metavar "REGION"
-    <> tabular "The AWS region in which to operate."
+    <> completes "The AWS region in which to operate."
          "The following regions are supported:"
              (map (second (PP.text . show) . join (,)) unsafeEnum)
          Frankfurt Nothing
@@ -198,7 +211,7 @@ level = option text
      ( short 'l'
     <> long "level"
     <> metavar "LEVEL"
-    <> tabular "Log level of AWS messages to emit."
+    <> completes "Log level of AWS messages to emit."
          "The following log levels are supported:"
              [ (Error, "Service errors and exceptions.")
              , (Debug, "Requests and responses.")
@@ -214,8 +227,8 @@ store = option text
     <> metavar "URI"
     <> defaults "URI specifying the storage system to use."
          "The URI format must be one of the following protocols:"
-             [ ("dynamo://[host[:port]]/table-name", "?")
-             , ("s3://[host[:port]]/bucket-name[/prefix]", "?")
+             [ ("dynamo://[host[:port]]/table-name", "Amazon DynamoDB")
+             , ("s3://[host[:port]]/bucket-name[/prefix]", "Amazon S3")
              ]
          defaultStore
          (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
@@ -229,13 +242,13 @@ key = option text
    <> metavar "STRING"
    <> defaults "The KMS Master Key Id to use."
        "Examples of KMS aliases or ARNs are:"
-           [ ("arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012", "Key ARN Example")
-           , ("arn:aws:kms:us-east-1:123456789012:alias/MyAliasName", "Alias ARN Example")
-           , ("12345678-1234-1234-1234-123456789012", "Globally Unique Key ID Example")
-           , ("alias/MyAliasName", "Alias Name Example")
+           [ ("arn:aws:kms:us-east-1:1234:key/12345678-1234", "")
+           , ("arn:aws:kms:us-east-1:1234:alias/MyAliasName", "")
+           , ("12345678-1234-1234-12345", "")
+           , ("alias/MyAliasName", "")
            ]
        defaultKeyId
-       Nothing
+       (Just "It's recommended to setup a new key using the default alias.")
     )
 
 context :: Parser Context
@@ -251,18 +264,16 @@ context = toContext $ option text
 
 name :: Fact -> Parser Name
 name r = option text
-     ( short 'n'
-    <> long "name"
+     ( long "name"
     <> metavar "STRING"
     <> describe "The unique name of the credential." Nothing r
      )
 
-version :: Fact -> Parser Version
-version r = option text
-     ( short 'v'
-    <> long "version"
+revision :: Fact -> Parser Revision
+revision r = option text
+     ( long "revision"
     <> metavar "STRING"
-    <> describe "The version of the secret." Nothing r
+    <> describe "The revision of the secret." Nothing r
      )
 
 force :: Parser Force
@@ -274,10 +285,9 @@ force = flag Prompt NoPrompt
 
 format :: Parser Format
 format = option text
-     ( short 'o'
-    <> long "format"
+     ( long "format"
     <> metavar "FORMAT"
-    <> tabular "Output format for displaying retrieved credentials."
+    <> completes "Output format for displaying retrieved credentials."
          "The following formats are supported:"
              [ (Pretty, "Pretty printed JSON.")
              , (JSON,   "JSON suitable for piping to another process.")
@@ -291,7 +301,7 @@ retain = option text
      ( short 'k'
     <> long "keep"
     <> metavar "NUMBER"
-    <> help "Number of versions to retain when truncating. [default: latest]"
+    <> help "Number of revisions to retain when truncating. [default: latest]"
     <> value 1
      )
 
