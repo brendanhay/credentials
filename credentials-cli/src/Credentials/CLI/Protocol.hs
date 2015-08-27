@@ -14,7 +14,6 @@ module Credentials.CLI.Protocol where
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
 import           Credentials                          as Cred
 import           Credentials.DynamoDB
 import           Credentials.DynamoDB                 (TableName)

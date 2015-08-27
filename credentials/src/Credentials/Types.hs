@@ -99,10 +99,13 @@ data Setup
     | Exists
       deriving (Eq, Show)
 
-instance ToLog Setup where
-    build = \case
+instance ToText Setup where
+    toText = \case
         Created -> "created"
         Exists  -> "exists"
+
+instance ToLog Setup where
+    build = build . toText
 
 class Storage m where
     type Layer m :: * -> *

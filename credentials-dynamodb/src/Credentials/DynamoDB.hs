@@ -64,7 +64,7 @@ instance Storage DynamoDB where
     layer        = runDynamo
     setup        = setup'
     cleanup      = cleanup'
-    list       r = safe r (list'       r)
+    list       r = safe r (listTable       r)
     insert n s r = safe r (insert' n s r)
     select n v r = snd <$> safe r (select' n v r)
     delete n v r = safe r (delete' n v r)
@@ -110,10 +110,10 @@ cleanup' t@(toText -> t') = do
         void $ send (deleteTable t')
         void $ await tableNotExists (describeTable t')
 
-list' :: (MonadCatch m, MonadAWS m)
+listTable :: (MonadCatch m, MonadAWS m)
       => TableName
       -> m [(Name, NonEmpty Revision)]
-list' t =
+listTable t =
     paginate (scan (toText t) & sAttributesToGet ?~ fields) $$ result
   where
     result = CL.concatMapM (traverse fromVal . view srsItems)

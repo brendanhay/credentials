@@ -9,7 +9,6 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Credentials.CLI.Types
@@ -26,7 +25,7 @@ import           Control.Exception.Lens
 import           Control.Lens                         (view, ( # ), (&), (.~),
                                                        (<&>))
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
+import           Control.Monad.Reader
 import           Credentials                          as Cred
 import           Credentials.CLI.Protocol
 import           Credentials.DynamoDB
@@ -56,6 +55,7 @@ import           Data.List.NonEmpty                   (NonEmpty (..))
 import           Data.Maybe
 import           Data.String
 import qualified Data.Text                            as Text
+import qualified Data.Text.Encoding                   as Text
 import           GHC.Exts                             (toList)
 import           Network.AWS
 import           Network.AWS.Data
@@ -80,52 +80,60 @@ data Force
     = NoPrompt
     | Prompt
 
+data Agree
+    = Yes
+    | No
+    | What String
+
+data Input
+    = Raw  Value
+    | Path FilePath
+
+data Mode
+    = Setup
+    | Cleanup   !Force
+    | List
+    | Put       !KeyId        !Context  !Name             !Input
+    | Get       !Context      !Name     !(Maybe Revision)
+    | Delete    !Name         !Revision !Force
+    | DeleteAll !(Maybe Name) !Natural  !Force
+
 data Format
     = Pretty
     | JSON
-    | Shell
+    | Echo
+    | Print
       deriving (Eq, Show)
 
 instance ToText Format where
     toText = \case
         Pretty -> "json-pretty"
         JSON   -> "json"
-        Shell  -> "echo"
+        Echo   -> "echo"
+        Print  -> "print"
 
 instance FromText Format where
     parser = takeLowerText >>= \case
         "json-pretty" -> pure Pretty
         "json"        -> pure JSON
-        "shell"       -> pure Shell
+        "echo"        -> pure Echo
         e             -> fromTextError $ "Failure parsing format from: " <> e
 
-data Mode
-    = Setup     !Store
-    | Cleanup   !Store !Force
-    | List      !Store !Format
-    | Put       !Store !KeyId        !Context !Name !Input            !Format
-    | Get       !Store               !Context !Name !(Maybe Revision) !Format
-    | Delete    !Store !Name         !Revision !Force
-    | DeleteAll !Store !(Maybe Name) !Natural !Force
+data Common = Common
+    { region :: !Region
+    , store  :: !Store
+    , format :: !Format
+    , level  :: !LogLevel
+    }
 
-current :: Mode -> Store
-current = \case
-    Setup     s           -> s
-    Cleanup   s _         -> s
-    List      s _         -> s
-    Put       s _ _ _ _ _ -> s
-    Get       s _ _ _ _   -> s
-    Delete    s _ _ _     -> s
-    DeleteAll s _ _ _     -> s
-
-newtype App a = App { unApp :: AWS a }
-    deriving ( Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch)
+newtype App a = App { unApp :: ReaderT Common AWS a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadReader Common)
 
 instance MonadAWS App where
-    liftAWS = App
+    liftAWS = App . lift
 
 instance Storage App where
-    type Layer App = AWS
+    type Layer App = ReaderT Common AWS
     data Ref   App
         = Table  URI (Ref DynamoDB)
         | Bucket URI BucketName (Maybe Text)
@@ -153,11 +161,11 @@ instance Storage App where
     deleteAll n = \case
         Table _ t -> wrap (deleteAll n t)
 
-wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
-wrap = App . layer
+--wrap :: (Storage m, Layer m ~ Layer App) => m a -> App a
+wrap = App . lift . layer
 
-runApp :: Env -> App a -> IO a
-runApp e = runResourceT . runAWS e . unApp
+runApp :: Env -> Common -> App a -> IO a
+runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
 
 type Store = Ref App
 
@@ -168,11 +176,12 @@ defaultStore = Table uri defaultTable
     scheme = Scheme "dynamo"
     auth   = Authority Nothing (Host "localhost") (Just (Port 8000))
 
-setStore :: HasEnv a => Store -> a -> a
-setStore = configure . \case
-    Table  u _   -> endpoint u dynamoDB
-    Bucket u _ _ -> endpoint u s3
-
+setStore :: HasEnv a => Common -> a -> a
+setStore c = configure f
+  where
+    f = case store c of
+        Table  u _   -> endpoint u dynamoDB
+        Bucket u _ _ -> endpoint u s3
 
 instance FromText Store where
     parser = uri >>= either fail pure . fromURI
@@ -196,59 +205,6 @@ instance ToText Store where
         Table  u _   -> u
         Bucket u _ _ -> u
 
-data Input
-    = Raw  Value
-    | Path FilePath
-
-data Output where
-    Output :: (ToLog a, ToJSON a) => Format -> a -> Output
-
-instance ToLog Output where
-    build (Output f x) =
-        case f of
-            Pretty -> build (encodePretty x) <> "\n"
-            JSON   -> encodeToByteStringBuilder (toJSON x)
-            Shell  -> build x
-
-instance ToLog (Store, [(Name, NonEmpty Revision)]) where
-    build (s, vs) = build s % ":\n" % build vs
-
-instance ToLog [(Name, NonEmpty Revision)] where
-    build = foldMap name
-      where
-        name (toBS -> n, v :| vs) =
-            "  " % n % ":\n" % f v % " [latest]\n" % foldMap g vs
-          where
-            g x = f x % "\n"
-            f x = "    revision: " % x
-
-            pad = build (BS8.replicate (BS8.length n + 6) ' ')
-
-instance ToJSON (Store, [(Name, NonEmpty Revision)]) where
-    toJSON (s, vs) = object [toText s .= vs]
-
-instance ToJSON [(Name, NonEmpty Revision)] where
-    toJSON = object . map (\(n, vs) -> toText n .= map toText (toList vs))
-
-instance ToLog (Name, (Value, Revision)) where
-    build (_, (Value x, _)) = build x
-
-instance ToJSON (Name, (Value, Revision)) where
-    toJSON (n, (x, v)) = object
-        [ "name"     .= toText n
-        , "revision" .= toText v
-        , "secret"   .= toText (toBS x)
-        ]
-
-instance ToLog (Name, Revision) where
-    build (_, v) = build v
-
-instance ToJSON (Name, Revision) where
-    toJSON (n, v) = object
-        [ "name"     .= toText n
-        , "revision" .= toText v
-        ]
-
 data Pair = Pair Text Text
 
 instance FromText Pair where
@@ -257,8 +213,8 @@ instance FromText Pair where
         key = A.skipSpace *> A.takeWhile1 (/= '=')
         val = A.char '='  *> A.takeText
 
-toContext :: Alternative f => f Pair -> f Context
-toContext f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
+ctx :: Alternative f => f Pair -> f Context
+ctx f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x

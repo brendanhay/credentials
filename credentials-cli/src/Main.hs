@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
@@ -25,8 +26,9 @@ import           Control.Exception.Lens
 import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
+import           Control.Monad.Reader
 import           Credentials                  as Store hiding (context)
+import           Credentials.CLI.Emit
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
 import           Credentials.CLI.Types
@@ -71,7 +73,6 @@ default (Builder, Text)
 
 -- Large File Storage:
 --   have a pointer to something in S3, or actually store everything there?
---   is S3's revisioning enough?
 
 -- Is Revision a better name than Revision due to the opaqueness?
 
@@ -93,57 +94,58 @@ default (Builder, Text)
 
 main :: IO ()
 main = do
-    (r, v, m) <- customExecParser settings options
-
-    l <- newLogger v stdout
-    e <- newEnv r Discover <&> (envLogger .~ l) . setStore (current m)
-
-    catches (runApp e (program r m))
+    (c, m) <- customExecParser settings options
+    l      <- newLogger (level c) stderr
+    e      <- newEnv (region c) Discover <&> (envLogger .~ l) . setStore c
+    catches (runApp e c (program c m))
         [ handler _CredentialError $ \x -> quit 1 (show x)
         ]
 
-program :: Region -> Mode -> App ()
-program r = \case
-    Setup s -> do
-        says ("Setting up " % s <> " in " % r <> ".")
-        x <- Store.setup s
-        says $ "Created " % s % " " % x % "."
+program :: Common -> Mode -> App ()
+program Common{region = r, store = s} = \case
+    Setup -> do
+        says ("Setting up " % s % " in " % r % ".")
+        says "Running ..."
+        setup s >>= emit s
+        says "Done."
 
-    Cleanup s f -> do
+    Cleanup f -> do
         says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
-            Store.cleanup s
-            says ("Deleted " % s % ".")
+            cleanup s
+            emit s ("deleted" :: Text)
+        says "Done."
 
-    List s f -> do
-        xs <- list s
-        say (Output f (s, xs))
+    List -> do
+        says ("Listing contents of " % s % " in " % r % "...")
+        list s >>= emit s
+        says "Done."
 
-    Put s k c n i f -> do
-        x <- case i of
-            Raw  v -> pure v
-            Path p -> do
-                when (f == Shell) $
-                    says ("Reading secret from " % p % "...")
-                Value <$> liftIO (BS.readFile p)
+    Put k c n i -> do
+        says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
+        x <- load i
+        put k c n x s >>= emit s
+        says "Done."
 
-        v <- Store.put k c n x s
-        say (Output f (n, v))
+    Get c n v -> do
+        say "Retrieving "
+        case v of
+            Nothing -> pure ()
+            Just x  -> say ("revision " % x)
+        says (" from " % s % " in " % r % "...")
+        get c n v s >>= emit s . (n,)
+        says "Done."
 
-    Get s c n v f -> do
-        x <- Store.get c n v s
-        say (Output f (n, x))
-
-    Delete s n v f -> do
-        says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
-        prompt f $ do
-            Store.delete n v s
-            says ("Deleted revision " % v % " of " % n % ".")
+--     Delete s n v f -> do
+--         says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
+--         prompt f $ do
+--             Store.delete n v s
+--             says ("Deleted revision " % v % " of " % n % ".")
 
 settings :: ParserPrefs
 settings = prefs (showHelpOnError <> columns 90)
 
-options :: ParserInfo (Region, LogLevel, Mode)
+options :: ParserInfo (Common, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
     desc = bold "credentials"
@@ -151,91 +153,98 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
 
     modes = subparser $ mconcat
         [ mode "setup"
-            (Setup <$> store)
+            (pure Setup)
             "Setup a new credential store."
             "Foo "
 
         , mode "cleanup"
-            (Cleanup <$> store <*> force)
+            (Cleanup <$> force)
             "Remove the credential store entirely."
             "Bar"
 
         , mode "list"
-            (List <$> store <*> format)
+            (pure List)
             "List all credential names and their respective revisions."
             "The -u,--uri option takes a URI conforming to one of the following protocols"
 
         , mode "get"
-            (Get <$> store <*> context <*> require name <*> optional revision <*> format)
+            (Get <$> context <*> require name <*> optional revision)
             "Fetch and decrypt a specific revision of a credential."
             "Defaults to the latest available revision, if --revision is not specified."
 
         , mode "put"
-            (Put <$> store <*> key <*> context <*> require name <*> input <*> format)
+            (Put <$> key <*> context <*> require name <*> input)
             "Write and encrypt a new revision of a credential to the store."
             "You can supply the secret as a string with --secret, or as \
             \a file path to the secret's contents using --path."
 
         , mode "delete"
-            (Delete <$> store <*> require name <*> require revision <*> force)
+            (Delete <$> require name <*> require revision <*> force)
             "Remove a specific revision of a credential from the store."
             "Foo"
 
         , mode "truncate"
-            (DeleteAll <$> store <*> optional name <*> retain <*> force)
+            (DeleteAll <$> optional name <*> retain <*> force)
             "Remove multiple revisions of a credential from the store."
             "If no credential name is specified, it will operate on all \
             \credentials. Defaults to removing all but the latest revision."
         ]
 
-mode :: String
-     -> Parser a
-     -> String
-     -> Doc
-     -> Mod CommandFields (Region, LogLevel, a)
-mode n p h foot = command n (info ((,,) <$> region <*> level <*> p) desc)
+mode :: String -> Parser a -> String -> Doc -> Mod CommandFields (Common, a)
+mode n p h foot = command n (info ((,) <$> common <*> p) desc)
   where
     desc = fullDesc <> progDesc h <> footerDoc (Just (indent 2 foot))
 
-region :: Parser Region
-region = option text
-     ( short 'r'
-    <> long "region"
-    <> metavar "REGION"
-    <> completes "The AWS region in which to operate."
-         "The following regions are supported:"
-             (map (second (PP.text . show) . join (,)) unsafeEnum)
-         Frankfurt Nothing
-     )
+common :: Parser Common
+common = Common
+    <$> option text
+         ( short 'r'
+        <> long "region"
+        <> metavar "REGION"
+        <> completes "The AWS region in which to operate."
+             "The following regions are supported:"
+                 (map (second (PP.text . show) . join (,)) unsafeEnum)
+             Frankfurt Nothing
+         )
 
-level :: Parser LogLevel
-level = option text
-     ( short 'l'
-    <> long "level"
-    <> metavar "LEVEL"
-    <> completes "Log level of AWS messages to emit."
-         "The following log levels are supported:"
-             [ (Error, "Service errors and exceptions.")
-             , (Debug, "Requests and responses.")
-             , (Trace, "Sensitive signing metadata.")
-             ]
-         Info Nothing
-     )
+    <*> option text
+         ( short 'u'
+        <> long "uri"
+        <> metavar "URI"
+        <> defaults "URI specifying the storage system to use."
+             "The URI format must be one of the following protocols:"
+                 [ ("dynamo:/[/host[:port]]/table-name", "Amazon DynamoDB")
+                 , ("s3:/[/host[:port]]/bucket-name[/prefix]", "Amazon S3")
+                 ]
+             defaultStore
+             (Just $ "If no host is specified for AWS services (ie. scheme:/path),"
+                 </> "then the AWS endpoints will be used if appropriate.")
+         )
 
-store :: Parser Store
-store = option text
-     ( short 'u'
-    <> long "uri"
-    <> metavar "URI"
-    <> defaults "URI specifying the storage system to use."
-         "The URI format must be one of the following protocols:"
-             [ ("dynamo:/[/host[:port]]/table-name", "Amazon DynamoDB")
-             , ("s3:/[/host[:port]]/bucket-name[/prefix]", "Amazon S3")
-             ]
-         defaultStore
-         (Just $ "If no host is specified for AWS services (ie. scheme:/path),"
-             </> "then the AWS endpoints will be used if appropriate.")
-     )
+    <*> option text
+         ( long "format"
+        <> metavar "FORMAT"
+        <> completes "Output format for displaying retrieved credentials."
+             "The following formats are supported:"
+                 [ (Pretty, "Pretty printed JSON.")
+                 , (JSON,   "Single-line JSON output.")
+                 , (Echo,   "Single-line textual output.")
+                 ]
+             Print Nothing
+         )
+
+    <*> option text
+         ( short 'l'
+        <> long "level"
+        <> metavar "LEVEL"
+        <> completes "Log level of AWS messages to emit."
+             "The following log levels are supported:"
+                 [ (Error, "Service errors and exceptions.")
+                 , (Debug, "Requests and responses.")
+                 , (Trace, "Sensitive signing metadata.")
+                 ]
+             Info Nothing
+         )
 
 key :: Parser KeyId
 key = option text
@@ -254,7 +263,7 @@ key = option text
     )
 
 context :: Parser Context
-context = toContext $ option text
+context = ctx $ option text
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
@@ -283,19 +292,6 @@ force = flag Prompt NoPrompt
      ( short 'f'
     <> long "force"
     <> help "Always overwrite or remove, without an interactive prompt."
-     )
-
-format :: Parser Format
-format = option text
-     ( long "format"
-    <> metavar "FORMAT"
-    <> completes "Output format for displaying retrieved credentials."
-         "The following formats are supported:"
-             [ (Pretty, "Pretty printed JSON.")
-             , (JSON,   "JSON suitable for piping to another process.")
-             , (Shell,  "Single or multi-line textual output.")
-             ]
-         Shell Nothing
      )
 
 retain :: Parser Natural

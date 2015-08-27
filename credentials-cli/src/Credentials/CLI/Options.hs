@@ -14,7 +14,6 @@ import           Control.Exception.Lens
 import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
 import           Credentials                  as Store hiding (context)
 import           Credentials.CLI.IO
 import           Credentials.CLI.Types
