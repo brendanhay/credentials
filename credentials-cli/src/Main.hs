@@ -82,13 +82,6 @@ default (Builder, Text)
 -- Val:
 --   rename to Table -> Item -> Attribute
 
--- Do the same formatting/pprint of mode progDesc to layout the main
--- credentials help view.
-
--- BUG:
--- when printing the store URI:
---  dynamo:///name -> dynamo:/name
-
 -- Output:
 --   Add ability to single line shell, or normal verbosity.
 --   Tidy up the emitters
