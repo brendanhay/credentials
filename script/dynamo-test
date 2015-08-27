@@ -3,10 +3,9 @@
 set -e
 
 store="$1"
-key="$2"
 
-if [ -z "$store" -o -z "$key" ]; then
-    echo "Usage: run <STORE> <KEY>"
+if [ -z "$store" ]; then
+    echo "Usage: run <STORE>"
     exit 1
 fi
 
@@ -16,7 +15,7 @@ send() {
     local mode="$1"
     local args="$2"
 
-    credentials -r $region $mode --store $store $args
+    credentials $mode -r $region -u $store $args
 }
 
 gets() {
@@ -24,11 +23,13 @@ gets() {
     local expect="$2"
     local context="$3"
 
-    local actual="$(credentials -r $region get --store $store -n $name $context)"
+    local actual="$(credentials get -r $region -u $store --name $name $context)"
 
     if [ "$expect" != "$actual" ]; then
         send "list"
-        echo "Test failed for $name, expect: $expect, actual: $actual"
+        echo "Test failed for $name, expected: $expect, actual: $actual"
+        send "get" "--name $name $context --format json"
+        echo ""
         exit 1
     fi
 }
@@ -38,23 +39,31 @@ puts() {
     local secret="$2"
     local context="$3"
 
-    credentials -r $region -l debug put --store $store -k $key -n $name -s "$secret" $context
+    credentials put -r $region -u $store --name $name -s "$secret" $context
     gets "$name" "$secret" "$context"
 }
 
 send "cleanup" "-f"
 send "setup"
 
+echo 'Put series'
+
 puts "foo" "secret"
 puts "foo" "not so secret"
 puts "foo" "something"
 puts "foo" "bother"
 
-send "delete" "-n foo -v 3 -f"
+echo 'Delete revision 3'
+
+send "delete" "--name foo --revision 3 -f"
 gets "foo" "bother"
 
-send "delete" "-n foo -v 4 -f"
+echo 'Delete revision 4'
+
+send "delete" "--name foo --revision 4 -f"
 gets "foo" "not so secret"
+
+echo 'Put with context'
 
 puts "bar" "longer secret" "-c a=b -c this=notthis"
 
