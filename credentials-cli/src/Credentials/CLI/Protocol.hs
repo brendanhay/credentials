@@ -62,14 +62,14 @@ endpoint u
 class FromURI a where
     fromURI :: URI -> Either String a
 
--- dynamo://aws/table-name
+-- dynamo:/table-name
 
 instance FromURI TableName where
     fromURI u = do
         scheme "dynamo" u
         nonEmpty "Table name cannot be empty." (path u)
 
--- s3://aws/bucket[/prefix]
+-- s3:/bucket[/prefix]
 
 instance FromURI (BucketName, Maybe Text) where
     fromURI u = do

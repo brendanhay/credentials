@@ -192,7 +192,7 @@ instance ToLog Store where
         Bucket u _ _ -> u
 
 instance ToText Store where
-    toText = toText .BB.toByteString . serializeURI . \case
+    toText = toText . BB.toByteString . serializeURI . \case
         Table  u _   -> u
         Bucket u _ _ -> u
 

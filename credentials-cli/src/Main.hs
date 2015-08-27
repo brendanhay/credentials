@@ -87,7 +87,9 @@ default (Builder, Text)
 -- when printing the store URI:
 --  dynamo:///name -> dynamo:/name
 
--- Add ability to single line shell, or normal verbosity.
+-- Output:
+--   Add ability to single line shell, or normal verbosity.
+--   Tidy up the emitters
 
 main :: IO ()
 main = do
@@ -227,11 +229,11 @@ store = option text
     <> metavar "URI"
     <> defaults "URI specifying the storage system to use."
          "The URI format must be one of the following protocols:"
-             [ ("dynamo://[host[:port]]/table-name", "Amazon DynamoDB")
-             , ("s3://[host[:port]]/bucket-name[/prefix]", "Amazon S3")
+             [ ("dynamo:/[/host[:port]]/table-name", "Amazon DynamoDB")
+             , ("s3:/[/host[:port]]/bucket-name[/prefix]", "Amazon S3")
              ]
          defaultStore
-         (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
+         (Just $ "If no host is specified for AWS services (ie. scheme:/path),"
              </> "then the AWS endpoints will be used if appropriate.")
      )
 
