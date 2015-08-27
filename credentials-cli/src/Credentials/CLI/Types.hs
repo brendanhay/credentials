@@ -219,17 +219,6 @@ ctx f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x
 
--- Orphan.
-instance FromText LogLevel where
-    parser = takeLowerText >>= \case
-        "error" -> pure Error
-        "debug" -> pure Debug
-        "trace" -> pure Trace
-        e       -> fromTextError $ "Failure parsing log level from: " <> e
-
-instance ToText LogLevel where
-    toText = Text.toLower . Text.pack . show
-
 unsafeEnum :: forall a. (Ord a, Data a, ToText a) => [a]
 unsafeEnum = sort . map fromConstr . dataTypeConstrs $ dataTypeOf val
   where
