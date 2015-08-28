@@ -1,6 +1,7 @@
 resolver:   nightly-2015-08-17
 flags:      {}
-extra-deps: []
+extra-deps:
+  - uri-bytestring-0.1.7
 packages:
   - credentials
   - credentials-cli

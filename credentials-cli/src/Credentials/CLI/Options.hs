@@ -10,42 +10,20 @@
 --
 module Credentials.CLI.Options where
 
-import           Control.Exception.Lens
-import           Control.Lens             (view, ( # ), (&), (.~), (<&>))
-import           Control.Monad
-import           Control.Monad.Catch
-import           Credentials              as Store hiding (context)
-import           Credentials.CLI.IO
 import           Credentials.CLI.Types
 import           Data.Bifunctor
-import           Data.ByteString          (ByteString)
-import qualified Data.ByteString          as BS
-import           Data.ByteString.Builder  (Builder)
-import qualified Data.ByteString.Builder  as Build
-import qualified Data.ByteString.Char8    as BS8
-import           Data.Char
-import           Data.Conduit             (($$))
-import qualified Data.Conduit.List        as CL
-import           Data.Data
-import           Data.HashMap.Strict      (HashMap)
-import           Data.List                (foldl', sort)
-import           Data.List.NonEmpty       (NonEmpty (..))
-import qualified Data.List.NonEmpty       as NE
-import           Data.Maybe
-import           Data.Proxy
+import           Data.List                (foldl')
 import qualified Data.Text                as Text
-import qualified Data.Text.IO             as Text
-import           Data.Tuple               (swap)
-import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.S3           (BucketName, ObjectVersionId)
-import           Numeric.Natural
 import           Options.Applicative      hiding (optional)
 import qualified Options.Applicative      as Opt
 import           Options.Applicative.Help hiding (string)
-import           System.Exit
-import           System.IO
+
+data Fact
+    = Required
+    | Optional
+    | Default
 
 -- | Setup an option with formatted help text.
 describe :: Text    -- ^ The options' description.
@@ -96,13 +74,11 @@ defaults title note xs x foot = describe title (Just doc) Default <> value x
 
     len = maximum (map (length . fst) xs)
 
-    rows | [r]  <- xs = sep r
-         | r:rs <- xs = foldl' (.$.) (sep r) (map sep rs)
+    rows | [r]  <- xs = f r
+         | r:rs <- xs = foldl' (.$.) (f r) (map f rs)
          | otherwise  = mempty
       where
-        sep (k, v) = "-"
-            <+> bold (text k)
-            <+> indent (len - length k) ts
+        f (k, v) = "-" <+> bold (text k) <+> indent (len - length k) ts
           where
             ts | null v    = mempty
                | otherwise = tupled [text v]

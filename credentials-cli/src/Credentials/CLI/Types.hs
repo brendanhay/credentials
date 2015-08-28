@@ -1,8 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE ExtendedDefaultRules       #-}
-{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -20,70 +16,27 @@
 --
 module Credentials.CLI.Types where
 
-import qualified Blaze.ByteString.Builder             as BB
-import           Control.Exception.Lens
-import           Control.Lens                         (view, ( # ), (&), (.~),
-                                                       (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.Reader
-import           Credentials                          as Cred
-import           Credentials.CLI.Protocol
+import           Credentials
 import           Credentials.DynamoDB
-import           Data.Aeson                           (object, (.=))
-import           Data.Aeson.Encode                    (encodeToByteStringBuilder)
-import           Data.Aeson.Encode.Pretty             (encodePretty)
-import           Data.Aeson.Types                     (ToJSON (..))
-import qualified Data.Attoparsec.Text                 as A
-import           Data.Bifunctor
-import           Data.ByteString                      (ByteString)
-import           Data.ByteString.Builder              (Builder)
-import qualified Data.ByteString.Builder              as Build
-import qualified Data.ByteString.Char8                as BS8
-import           Data.Char
-import           Data.Conduit                         (($$))
-import qualified Data.Conduit.List                    as CL
+import qualified Data.Attoparsec.Text    as A
+import           Data.ByteString.Builder (Builder)
 import           Data.Data
-import           Data.Data
-import           Data.Foldable                        (foldMap)
-import           Data.HashMap.Strict                  (HashMap)
-import           Data.HashMap.Strict                  (HashMap)
-import qualified Data.HashMap.Strict                  as Map
-import           Data.List                            (foldl', sort)
-import           Data.List                            (intersperse)
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import           Data.Maybe
-import           Data.String
-import qualified Data.Text                            as Text
-import qualified Data.Text.Encoding                   as Text
-import           GHC.Exts                             (toList)
+import qualified Data.HashMap.Strict     as Map
+import           Data.List               (sort)
+import qualified Data.Text               as Text
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.DynamoDB                 (dynamoDB)
-import           Network.AWS.S3                       (BucketName (..),
-                                                       ObjectVersionId, s3)
-import           Numeric.Natural
+import           Network.AWS.DynamoDB    (dynamoDB)
+import           Network.AWS.S3          (BucketName (..), s3)
 import           Options.Applicative
-import           Options.Applicative.Builder.Internal (HasCompleter)
-import           Options.Applicative.Help.Pretty      (Pretty (..), text)
-import           System.Exit
-import           System.IO
 import           URI.ByteString
-
-data Fact
-    = Required
-    | Optional
-    | Default
 
 data Force
     = NoPrompt
     | Prompt
-
-data Agree
-    = Yes
-    | No
-    | What String
 
 data Input
     = Raw  Value
@@ -107,33 +60,35 @@ data Format
 
 instance ToText Format where
     toText = \case
-        Pretty -> "json-pretty"
+        Pretty -> "pretty"
         JSON   -> "json"
         Echo   -> "echo"
         Print  -> "print"
 
 instance FromText Format where
     parser = takeLowerText >>= \case
-        "json-pretty" -> pure Pretty
-        "json"        -> pure JSON
-        "echo"        -> pure Echo
-        e             -> fromTextError $ "Failure parsing format from: " <> e
+        "pretty" -> pure Pretty
+        "json"   -> pure JSON
+        "echo"   -> pure Echo
+        e        -> fromTextError $ "Failure parsing format from: " <> e
 
-data Common = Common
+data Options = Options
     { region :: !Region
     , store  :: !Store
     , format :: !Format
     , level  :: !LogLevel
     }
 
-newtype App a = App { unApp :: ReaderT Common AWS a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadReader Common)
+newtype App a = App { unApp :: ReaderT Options AWS a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadReader Options)
 
 instance MonadAWS App where
     liftAWS = App . lift
 
+type Store = Ref App
+
 instance Storage App where
-    type Layer App = ReaderT Common AWS
+    type Layer App = ReaderT Options AWS
     data Ref   App
         = Table  URI (Ref DynamoDB)
         | Bucket URI BucketName (Maybe Text)
@@ -161,42 +116,8 @@ instance Storage App where
 run :: DynamoDB a -> App a
 run = App . lift . layer
 
-runApp :: Env -> Common -> App a -> IO a
+runApp :: Env -> Options -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
-
-type Store = Ref App
-
-defaultStore :: Store
-defaultStore = Table uri defaultTable
-  where
-    uri  = URI dyn (Just auth) ("/" <> toBS defaultTable) mempty Nothing
-    dyn  = Scheme "dynamo"
-    auth = Authority Nothing (Host "localhost") (Just (Port 8000))
-
-setStore :: HasEnv a => Common -> a -> a
-setStore c = configure f
-  where
-    f = case store c of
-        Table  u _   -> endpoint u dynamoDB
-        Bucket u _ _ -> endpoint u s3
-
-instance FromText Store where
-    parser = uri >>= either fail pure . fromURI
-      where
-        uri = A.takeText >>= either (fail . show) pure . f . toBS
-        f   = parseURI strictURIParserOptions
-
-instance FromURI Store where
-    fromURI u = Table u <$> fromURI u <|> uncurry (Bucket u) <$> fromURI u
-
-instance ToText Store where
-    toText = toText . BB.toByteString . serializeURI . \case
-        Table  u _   -> u
-        Bucket u _ _ -> u
-
-instance Show   Store where show   = Text.unpack . toText
-instance Pretty Store where pretty = text . show
-instance ToLog  Store where build  = build . toText
 
 data Pair = Pair Text Text
 

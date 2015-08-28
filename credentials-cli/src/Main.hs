@@ -1,14 +1,8 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE ExtendedDefaultRules       #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE TupleSections        #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -23,66 +17,31 @@
 module Main (main) where
 
 import           Control.Exception.Lens
-import           Control.Lens                    (view, ( # ), (&), (.~), (<&>))
-import           Control.Monad
+import           Control.Lens                    ((.~), (<&>))
 import           Control.Monad.Catch
-import           Control.Monad.Reader
 import           Credentials                     hiding (context)
-import           Credentials.CLI.Emit
+import           Credentials.CLI.Format
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
+import           Credentials.CLI.Store
 import           Credentials.CLI.Types
-import           Data.Bifunctor
-import           Data.ByteString                 (ByteString)
-import qualified Data.ByteString                 as BS
 import           Data.ByteString.Builder         (Builder)
-import qualified Data.ByteString.Builder         as Build
-import qualified Data.ByteString.Char8           as BS8
-import           Data.Char
-import           Data.Conduit                    (($$))
-import qualified Data.Conduit.List               as CL
-import           Data.Data
-import           Data.HashMap.Strict             (HashMap)
-import           Data.List                       (foldl', sort)
-import           Data.List.NonEmpty              (NonEmpty (..))
-import qualified Data.List.NonEmpty              as NE
-import           Data.Maybe
-import           Data.Proxy
-import qualified Data.Text                       as Text
-import qualified Data.Text.IO                    as Text
+import           Data.Text                       (Text)
 import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Network.AWS.S3                  (BucketName, ObjectVersionId)
-import           Numeric.Natural
 import           Options.Applicative             hiding (optional)
-import qualified Options.Applicative             as Opt
 import           Options.Applicative.Help.Pretty
-import           System.Exit
 import           System.IO
 
 default (Builder, Text)
 
--- Deleting:
---   how about tombstones, or some thought out plan for how the revision number
---   semantics are impacted by deletes.
-
---   Some opaque revision format returned?
---     sha (revision + timestamp)?
-
 -- Large File Storage:
 --   have a pointer to something in S3, or actually store everything there?
 
--- Is Revision a better name than Revision due to the opaqueness?
-
--- An optional comment for revisions?
+-- Revision:
+--   an optional comment for revisions.
 
 -- Val:
 --   rename to Table -> Item -> Attribute
-
--- Output:
---   Add ability to single line shell, or normal verbosity.
---   Tidy up the emitters
 
 main :: IO ()
 main = do
@@ -93,8 +52,8 @@ main = do
         [ handler _CredentialError $ \x -> quit 1 (show x)
         ]
 
-program :: Common -> Mode -> App ()
-program Common{region = r, store = s} = \case
+program :: Options -> Mode -> App ()
+program Options{region = r, store = s} = \case
     Setup -> do
         says ("Setting up " % s % " in " % r % ".")
         says "Running ..."
@@ -144,7 +103,7 @@ program Common{region = r, store = s} = \case
             says ("Truncated " % n % ".")
         says "Done."
 
-options :: ParserInfo (Common, Mode)
+options :: ParserInfo (Options, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
     desc = bold "credentials"
@@ -192,14 +151,14 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             "Bar"
         ]
 
-mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Common, a)
+mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
 mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
     desc = progDescDoc (Just $ wrap h)
     foot = footerDoc   (Just $ indent 2 (wrap f) <> line)
 
-common :: Parser Common
-common = Common
+common :: Parser Options
+common = Options
     <$> textOption
          ( short 'r'
         <> long "region"

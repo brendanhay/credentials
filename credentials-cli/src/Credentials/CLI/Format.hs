@@ -7,16 +7,17 @@
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 -- |
--- Module      : Credentials.CLI.Emit
+-- Module      : Credentials.CLI.Format
 -- Copyright   : (c) 2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.CLI.Emit where
+module Credentials.CLI.Format where
 
 import           Credentials
+import           Credentials.CLI.Store    ()
 import           Credentials.CLI.Types
 import           Data.Aeson               (ToJSON (..), object, (.=))
 import           Data.List                (foldl', intersperse)
@@ -62,9 +63,9 @@ instance ToLog Result where
         GetR      _ v _ -> build (toBS v)
         DeleteR   {}    -> build Deleted
         TruncateR {}    -> build Truncated
-        ListR        rs -> foldMap line rs
+        ListR        rs -> foldMap f rs
           where
-            line (n, v :| vs) =
+            f (n, v :| vs) =
                 build n % "," % mconcat (intersperse "," $ map build (v:vs)) % "\n"
 
 instance ToJSON Result where
@@ -100,13 +101,12 @@ instance Pretty Result where
         val  v = "secret:"   <+> doc (toBS v)
 
         go []     = mempty
-        go (r:rs) = foldl' (.$.) (name r) (map name rs)
+        go (r:rs) = foldl' (.$.) (f r) (map f rs)
           where
-            name (n, v :| vs) = doc n <> ":" .$.
+            f (n, v :| vs) = doc n <> ":" .$.
                 indent 2 (extractChunk (revs v vs))
 
             revs v vs = tabulate $
                 (item v, "# latest") : map ((,mempty) . item) vs
 
             item x = "-" <+> doc x
-

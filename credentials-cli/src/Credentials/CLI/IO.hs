@@ -1,13 +1,5 @@
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE ExtendedDefaultRules       #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -24,29 +16,28 @@ module Credentials.CLI.IO where
 import           Control.Arrow
 import           Control.Monad.Reader
 import           Credentials
-import           Credentials.CLI.Emit
+import           Credentials.CLI.Format
 import           Credentials.CLI.Types
 import           Data.Aeson                      (ToJSON (..))
 import           Data.Aeson.Encode
 import           Data.Aeson.Encode.Pretty
-import           Data.ByteString                 (ByteString)
 import qualified Data.ByteString                 as BS
 import           Data.ByteString.Builder         (Builder)
 import           Data.ByteString.Builder         (hPutBuilder, stringUtf8)
 import qualified Data.ByteString.Builder         as Build
-import qualified Data.ByteString.Char8           as BS8
 import           Data.Char                       (isSpace, toLower)
-import           Data.Conduit                    (($$))
-import qualified Data.Conduit.List               as CL
-import           Data.Data
 import           Data.Monoid
-import qualified Data.Text                       as Text
-import           Network.AWS.Data.Log
+import           Network.AWS.Data
 import           Options.Applicative.Help.Pretty
 import           System.Exit
 import           System.IO
 
 default (Builder)
+
+data Agree
+    = Yes
+    | No
+    | What String
 
 quit :: ToLog a => Int -> a -> IO ()
 quit n m = err m >> exitWith (ExitFailure n)
