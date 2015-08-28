@@ -184,13 +184,15 @@ common = Options
          )
 
     <*> textOption
-         ( long "format"
+         ( short 'o'
+        <> long "output"
         <> metavar "FORMAT"
         <> completes "Output format for displaying retrieved credentials."
              "The following formats are supported:"
                  [ (Pretty, "Pretty printed JSON.")
                  , (JSON,   "Single-line JSON output.")
                  , (Echo,   "Single-line textual output.")
+                 , (Print,  "Print multi-line user output.")
                  ]
              Print Nothing
          )
@@ -204,6 +206,7 @@ common = Options
                  [ (Error, "Service errors and exceptions.")
                  , (Debug, "Requests and responses.")
                  , (Trace, "Sensitive signing metadata.")
+                 , (Info,  "No logging of library routines.")
                  ]
              Info Nothing
          )
@@ -212,7 +215,7 @@ key :: Parser KeyId
 key = textOption
     ( short 'k'
    <> long "key"
-   <> metavar "STRING"
+   <> metavar "ARN"
    <> defaults "The KMS Master Key Id to use."
        "Examples of KMS aliases or ARNs are:"
            [ ("arn:aws:kms:us-east-1:1234:key/12345678-1234", "")
