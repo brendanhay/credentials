@@ -88,7 +88,7 @@ default (Builder, Text)
 
 main :: IO ()
 main = do
-    (c, m) <- customExecParser settings options
+    (c, m) <- customExecParser (prefs showHelpOnError) options
     l      <- newLogger (level c) stderr
     e      <- newEnv (region c) Discover <&> (envLogger .~ l) . setStore c
     catches (runApp e c (program c m))
@@ -146,14 +146,11 @@ program Common{region = r, store = s} = \case
             says ("Truncated " % n % ".")
         says "Done."
 
-settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns full)
-
 options :: ParserInfo (Common, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
     desc = bold "credentials"
-        <+> "- Provides a unified interface for managing secure, shared credentials."
+        <+> "- Administration tool for managing secure, shared credentials."
 
     modes = subparser $ mconcat
         [ mode "setup"
@@ -165,7 +162,7 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
 
         , mode "cleanup"
             (Cleanup <$> force)
-            "Remove the credential store entirely."
+            "Remove a credential store."
             "Warning: This will completely remove the credential store. For some \
             \storage engines this action is irrevocable unless you specifically \
             \perform backups for your data."
@@ -193,19 +190,19 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
 
         , mode "truncate"
             (Truncate <$> name <*> force)
-            "Remove multiple revisions of a credential from the store."
-            "Removes all but the latest revision of the credential."
+            "Remove all revisions of a credential except the latest from the store. ba r bar bar b barb bar"
+            "Bar"
         ]
 
-mode :: String -> Parser a -> Doc -> Text -> Mod CommandFields (Common, a)
+mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Common, a)
 mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
-    desc = progDescDoc (Just h)
-    foot = footerDoc   (Just $ indent 2 (wrap full f) <> line)
+    desc = progDescDoc (Just $ wrap h)
+    foot = footerDoc   (Just $ indent 2 (wrap f) <> line)
 
 common :: Parser Common
 common = Common
-    <$> option text
+    <$> textOption
          ( short 'r'
         <> long "region"
         <> metavar "REGION"
@@ -215,7 +212,7 @@ common = Common
              Frankfurt Nothing
          )
 
-    <*> option text
+    <*> textOption
          ( short 'u'
         <> long "uri"
         <> metavar "URI"
@@ -229,7 +226,7 @@ common = Common
                    \the AWS endpoints will be used if appropriate.")
          )
 
-    <*> option text
+    <*> textOption
          ( long "format"
         <> metavar "FORMAT"
         <> completes "Output format for displaying retrieved credentials."
@@ -241,7 +238,7 @@ common = Common
              Print Nothing
          )
 
-    <*> option text
+    <*> textOption
          ( short 'l'
         <> long "level"
         <> metavar "LEVEL"
@@ -255,7 +252,7 @@ common = Common
          )
 
 key :: Parser KeyId
-key = option text
+key = textOption
     ( short 'k'
    <> long "key"
    <> metavar "STRING"
@@ -271,7 +268,7 @@ key = option text
     )
 
 context :: Parser Context
-context = ctx $ option text
+context = ctx $ textOption
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
@@ -282,14 +279,14 @@ context = ctx $ option text
     )
 
 name :: Parser Name
-name = option text
+name = textOption
      ( long "name"
     <> metavar "STRING"
     <> describe "The unique name of the credential." Nothing Required
      )
 
 revision :: Fact -> Parser Revision
-revision r = option text
+revision r = textOption
      ( long "revision"
     <> metavar "STRING"
     <> describe "The revision of the credential." Nothing r
@@ -306,7 +303,7 @@ input :: Parser Input
 input = textual <|> filepath
   where
     textual = Raw
-        <$> option text
+        <$> textOption
              ( short 's'
             <> long "secret"
             <> metavar "STRING"

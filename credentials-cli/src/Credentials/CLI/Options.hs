@@ -11,56 +11,50 @@
 module Credentials.CLI.Options where
 
 import           Control.Exception.Lens
-import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
+import           Control.Lens             (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad
 import           Control.Monad.Catch
-import           Credentials                  as Store hiding (context)
+import           Credentials              as Store hiding (context)
 import           Credentials.CLI.IO
 import           Credentials.CLI.Types
 import           Data.Bifunctor
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
-import           Data.ByteString.Builder      (Builder)
-import qualified Data.ByteString.Builder      as Build
-import qualified Data.ByteString.Char8        as BS8
+import           Data.ByteString          (ByteString)
+import qualified Data.ByteString          as BS
+import           Data.ByteString.Builder  (Builder)
+import qualified Data.ByteString.Builder  as Build
+import qualified Data.ByteString.Char8    as BS8
 import           Data.Char
-import           Data.Conduit                 (($$))
-import qualified Data.Conduit.List            as CL
+import           Data.Conduit             (($$))
+import qualified Data.Conduit.List        as CL
 import           Data.Data
-import           Data.HashMap.Strict          (HashMap)
-import           Data.List                    (foldl', sort)
-import           Data.List.NonEmpty           (NonEmpty (..))
-import qualified Data.List.NonEmpty           as NE
+import           Data.HashMap.Strict      (HashMap)
+import           Data.List                (foldl', sort)
+import           Data.List.NonEmpty       (NonEmpty (..))
+import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Proxy
-import qualified Data.Text                    as Text
-import qualified Data.Text.IO                 as Text
-import           Data.Tuple                   (swap)
+import qualified Data.Text                as Text
+import qualified Data.Text.IO             as Text
+import           Data.Tuple               (swap)
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.S3               (BucketName, ObjectVersionId)
+import           Network.AWS.S3           (BucketName, ObjectVersionId)
 import           Numeric.Natural
-import           Options.Applicative          hiding (optional)
-import qualified Options.Applicative          as Opt
+import           Options.Applicative      hiding (optional)
+import qualified Options.Applicative      as Opt
+import           Options.Applicative.Help hiding (string)
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, brackets, indent,
-                                               line, tupled, (<+>), (</>))
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
-
-full, column :: Int
-full   = 80
-column = 55
 
 -- | Setup an option with formatted help text.
 describe :: Text    -- ^ The options' description.
          -> Maybe Doc -- ^ The help body (title/footer in tabular).
          -> Fact
          -> Mod OptionFields a
-describe title body r = helpDoc . Just $ wrap column title <> doc <> line
+describe title body r = helpDoc . Just $ wrap title <> doc <> line
   where
-    doc | Just b <- body = pad (maybe b (b PP.<$>) foot)
+    doc | Just b <- body = pad (maybe b (b .$.) foot)
         | otherwise      = maybe mempty pad foot
 
     foot = case r of
@@ -95,22 +89,23 @@ defaults :: ToText a
          -> Mod OptionFields a
 defaults title note xs x foot = describe title (Just doc) Default <> value x
   where
-    doc = maybe id (flip (PP.<$>)) (wrap column <$> foot) $ wrap column note
-        PP.<$> indent 2 rows
-        PP.<$> ("Defaults to " <> bold (PP.text (string x)) <> ".")
+    doc   = maybe table (table .$.) (wrap <$> foot)
+    table = wrap note
+        .$. indent 2 rows
+        .$. ("Defaults to " <> bold (text (string x)) <> ".")
 
     len = maximum (map (length . fst) xs)
 
     rows | [r]  <- xs = sep r
-         | r:rs <- xs = foldl' (PP.<$>) (sep r) (map sep rs)
+         | r:rs <- xs = foldl' (.$.) (sep r) (map sep rs)
          | otherwise  = mempty
       where
         sep (k, v) = "-"
-            <+> bold (PP.text k)
+            <+> bold (text k)
             <+> indent (len - length k) ts
           where
             ts | null v    = mempty
-               | otherwise = tupled [PP.text v]
+               | otherwise = tupled [text v]
 
 require :: Functor f => (Fact -> f a) -> f a
 require f = f Required
@@ -118,23 +113,8 @@ require f = f Required
 optional :: Alternative f => (Fact -> f a) -> f (Maybe a)
 optional f = Opt.optional (f Optional)
 
-text :: FromText a => ReadM a
-text = eitherReader (fromText . Text.pack)
+textOption :: FromText a => Mod OptionFields a -> Parser a
+textOption = option (eitherReader (fromText . Text.pack))
 
-wrap :: Int -> Text -> Doc
-wrap width = rejoin . map (PP.text . Text.unpack) . combine . split
-  where
-    rejoin []     = mempty
-    rejoin (x:xs) = foldl' (PP.<$>) x xs
-
-    combine ((a, b) : (c, d) : xs)
-        | Text.length a + b + Text.length c < width
-                   = combine $ (a <> Text.replicate b " " <> c, d) : xs
-    combine (x:xs) = fst x : combine xs
-    combine []     = []
-
-    split "" = []
-    split x  = (a, Text.length c) : split d
-      where
-        (a, b) = Text.break isSpace x
-        (c, d) = Text.span  isSpace b
+wrap :: Text -> Doc
+wrap = extractChunk . paragraph . Text.unpack
