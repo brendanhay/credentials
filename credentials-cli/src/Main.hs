@@ -59,8 +59,8 @@ import           Options.Applicative          hiding (optional)
 import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, hardline, indent,
-                                               (<+>), (</>))
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, indent, line, (<+>),
+                                               (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 default (Builder, Text)
@@ -201,7 +201,7 @@ mode :: String -> Parser a -> Doc -> Text -> Mod CommandFields (Common, a)
 mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
     desc = progDescDoc (Just h)
-    foot = footerDoc   (Just $ indent 2 (wrap full f) <> hardline)
+    foot = footerDoc   (Just $ indent 2 (wrap full f) <> line)
 
 common :: Parser Common
 common = Common

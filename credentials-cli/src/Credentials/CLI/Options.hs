@@ -45,8 +45,8 @@ import           Options.Applicative          hiding (optional)
 import qualified Options.Applicative          as Opt
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, brackets, hardline,
-                                               indent, tupled, (<+>), (</>))
+import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, brackets, indent,
+                                               line, tupled, (<+>), (</>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 full, column :: Int
@@ -58,7 +58,7 @@ describe :: Text    -- ^ The options' description.
          -> Maybe Doc -- ^ The help body (title/footer in tabular).
          -> Fact
          -> Mod OptionFields a
-describe title body r = helpDoc . Just $ wrap column title <> doc <> hardline
+describe title body r = helpDoc . Just $ wrap column title <> doc <> line
   where
     doc | Just b <- body = pad (maybe b (b PP.<$>) foot)
         | otherwise      = maybe mempty pad foot
@@ -68,7 +68,7 @@ describe title body r = helpDoc . Just $ wrap column title <> doc <> hardline
         Optional -> Just ("This is" <+> bold "optional.")
         Default  -> Nothing
 
-    pad = mappend hardline . indent 2
+    pad = mappend line . indent 2
 
 -- | Setup a tabular list of possible values for an option,
 -- a default value, and an auto-completer.
