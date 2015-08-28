@@ -166,7 +166,7 @@ common = Options
         <> completes "The AWS region in which to operate."
              "The following regions are supported:"
                  (map (,mempty) unsafeEnum)
-             Frankfurt Nothing
+v             Frankfurt Nothing
          )
 
     <*> textOption
@@ -220,8 +220,8 @@ key = textOption
        "Examples of KMS aliases or ARNs are:"
            [ ("arn:aws:kms:us-east-1:1234:key/12345678-1234", "")
            , ("arn:aws:kms:us-east-1:1234:alias/MyAliasName", "")
-           , ("12345678-1234-1234-12345", "")
-           , ("alias/MyAliasName", "")
+           , ("12345678-1234-1234-12345",                     "")
+           , ("alias/MyAliasName",                            "")
            ]
        defaultKeyId
        (Just "It's recommended to setup a new key using the default alias.")
