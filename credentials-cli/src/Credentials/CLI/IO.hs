@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE ExtendedDefaultRules       #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -20,26 +21,28 @@
 --
 module Credentials.CLI.IO where
 
+import           Control.Arrow
 import           Control.Monad.Reader
 import           Credentials
 import           Credentials.CLI.Emit
 import           Credentials.CLI.Types
-import           Data.Aeson               (ToJSON (..))
+import           Data.Aeson                      (ToJSON (..))
 import           Data.Aeson.Encode
 import           Data.Aeson.Encode.Pretty
-import           Data.ByteString          (ByteString)
-import qualified Data.ByteString          as BS
-import           Data.ByteString.Builder  (Builder)
-import           Data.ByteString.Builder  (hPutBuilder)
-import qualified Data.ByteString.Builder  as Build
-import qualified Data.ByteString.Char8    as BS8
-import           Data.Char
-import           Data.Conduit             (($$))
-import qualified Data.Conduit.List        as CL
+import           Data.ByteString                 (ByteString)
+import qualified Data.ByteString                 as BS
+import           Data.ByteString.Builder         (Builder)
+import           Data.ByteString.Builder         (hPutBuilder, stringUtf8)
+import qualified Data.ByteString.Builder         as Build
+import qualified Data.ByteString.Char8           as BS8
+import           Data.Char                       (isSpace, toLower)
+import           Data.Conduit                    (($$))
+import qualified Data.Conduit.List               as CL
 import           Data.Data
 import           Data.Monoid
-import qualified Data.Text                as Text
+import qualified Data.Text                       as Text
 import           Network.AWS.Data.Log
+import           Options.Applicative.Help.Pretty
 import           System.Exit
 import           System.IO
 
@@ -60,17 +63,17 @@ say x = do
     when (f == Print) $
         liftIO $ hPutBuilder stderr (build x)
 
-emit :: (ToJSON (Emit a), ToLog (Emit a)) => Store -> a -> App ()
-emit s x = do
-    f <- asks format
-    let p = f `elem` [Pretty, Print]
-        e = Emit p (s, x)
+emit :: Result -> App ()
+emit r = do
+    (f, s) <- asks (format &&& store)
+    let e = Emit s r
     liftIO . hPutBuilder stdout $
         case f of
             Pretty -> build (encodePretty e) <> "\n"
             JSON   -> encodeToByteStringBuilder (toJSON e)
-            Echo   -> build e
-            Print  -> build e <> "\n"
+            Echo   -> build r
+            Print  -> stringUtf8
+                (displayS (renderPretty 0.4 80 (pretty e)) "") <> "\n"
 
 load :: Input -> App Value
 load (Raw  v) = return v

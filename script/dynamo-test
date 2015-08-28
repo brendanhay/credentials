@@ -27,6 +27,7 @@ gets() {
 
     if [ "$expect" != "$actual" ]; then
         send "list"
+        echo ""
         echo "Test failed for $name, expected: $expect, actual: $actual"
         send "get" "-l debug --name $name $context"
         echo ""
@@ -47,8 +48,10 @@ puts() {
 }
 
 send "cleanup" "-f"
+echo ""
 send "setup"
 
+echo ""
 echo "Put series ..."
 
 puts foo1 "foo" "secret"

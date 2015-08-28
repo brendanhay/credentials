@@ -66,10 +66,9 @@ import           Network.AWS.S3                       (BucketName (..),
 import           Numeric.Natural
 import           Options.Applicative
 import           Options.Applicative.Builder.Internal (HasCompleter)
+import           Options.Applicative.Help.Pretty      (Pretty (..), text)
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen         (Doc, Pretty)
-import qualified Text.PrettyPrint.ANSI.Leijen         as PP
 import           URI.ByteString
 
 data Fact
@@ -94,7 +93,7 @@ data Mode
     = Setup
     | Cleanup  !Force
     | List
-    | Put      !KeyId   !Context  !Name             !Input
+    | Put      !KeyId   !Context  !Name !Input
     | Get      !Context !Name     !(Maybe Revision)
     | Delete   !Name    !Revision !Force
     | Truncate !Name    !Force
@@ -190,18 +189,14 @@ instance FromText Store where
 instance FromURI Store where
     fromURI u = Table u <$> fromURI u <|> uncurry (Bucket u) <$> fromURI u
 
-instance Show Store where
-    show = Text.unpack . toText
-
-instance ToLog Store where
-    build = build . BB.toLazyByteString . serializeURI . \case
-        Table  u _   -> u
-        Bucket u _ _ -> u
-
 instance ToText Store where
     toText = toText . BB.toByteString . serializeURI . \case
         Table  u _   -> u
         Bucket u _ _ -> u
+
+instance Show   Store where show   = Text.unpack . toText
+instance Pretty Store where pretty = text . show
+instance ToLog  Store where build  = build . toText
 
 data Pair = Pair Text Text
 

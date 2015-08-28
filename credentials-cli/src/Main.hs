@@ -23,45 +23,43 @@
 module Main (main) where
 
 import           Control.Exception.Lens
-import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
+import           Control.Lens                    (view, ( # ), (&), (.~), (<&>))
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.Reader
-import           Credentials                  as Store hiding (context)
+import           Credentials                     hiding (context)
 import           Credentials.CLI.Emit
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
 import           Credentials.CLI.Types
 import           Data.Bifunctor
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
-import           Data.ByteString.Builder      (Builder)
-import qualified Data.ByteString.Builder      as Build
-import qualified Data.ByteString.Char8        as BS8
+import           Data.ByteString                 (ByteString)
+import qualified Data.ByteString                 as BS
+import           Data.ByteString.Builder         (Builder)
+import qualified Data.ByteString.Builder         as Build
+import qualified Data.ByteString.Char8           as BS8
 import           Data.Char
-import           Data.Conduit                 (($$))
-import qualified Data.Conduit.List            as CL
+import           Data.Conduit                    (($$))
+import qualified Data.Conduit.List               as CL
 import           Data.Data
-import           Data.HashMap.Strict          (HashMap)
-import           Data.List                    (foldl', sort)
-import           Data.List.NonEmpty           (NonEmpty (..))
-import qualified Data.List.NonEmpty           as NE
+import           Data.HashMap.Strict             (HashMap)
+import           Data.List                       (foldl', sort)
+import           Data.List.NonEmpty              (NonEmpty (..))
+import qualified Data.List.NonEmpty              as NE
 import           Data.Maybe
 import           Data.Proxy
-import qualified Data.Text                    as Text
-import qualified Data.Text.IO                 as Text
+import qualified Data.Text                       as Text
+import qualified Data.Text.IO                    as Text
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.S3               (BucketName, ObjectVersionId)
+import           Network.AWS.S3                  (BucketName, ObjectVersionId)
 import           Numeric.Natural
-import           Options.Applicative          hiding (optional)
-import qualified Options.Applicative          as Opt
+import           Options.Applicative             hiding (optional)
+import qualified Options.Applicative             as Opt
+import           Options.Applicative.Help.Pretty
 import           System.Exit
 import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, indent, line, (<+>),
-                                               (</>))
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 default (Builder, Text)
 
@@ -100,25 +98,25 @@ program Common{region = r, store = s} = \case
     Setup -> do
         says ("Setting up " % s % " in " % r % ".")
         says "Running ..."
-        setup s >>= emit s
+        setup s >>= emit . SetupR
         says "Done."
 
     Cleanup f -> do
         says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
             cleanup s
-            emit s ("deleted" :: Text)
+            emit CleanupR
         says "Done."
 
     List -> do
         says ("Listing contents of " % s % " in " % r % "...")
-        listAll s >>= emit s
+        listAll s >>= emit . ListR
         says "Done."
 
     Put k c n i -> do
         says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
         x <- load i
-        put k c n x s >>= emit s
+        put k c n x s >>= emit . PutR n
         says "Done."
 
     Get c n v -> do
@@ -127,14 +125,14 @@ program Common{region = r, store = s} = \case
             Nothing -> pure ()
             Just x  -> say (" revision " % x % " of")
         says (" " % n % " from " % s % " in " % r % "...")
-        get c n v s >>= emit s . (n,)
+        get c n v s >>= emit . uncurry (GetR n)
         says "Done."
 
     Delete n v f -> do
         says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
         prompt f $ do
             delete n (Just v) s
-            emit s (n, v, "deleted" :: Text)
+            emit (DeleteR n v)
             says ("Deleted revision " % v % " of " % n % ".")
         says "Done."
 
@@ -142,7 +140,7 @@ program Common{region = r, store = s} = \case
         says ("This will delete all but the latest revision of " % n % " from " % s % " in " % r % "!")
         prompt f $ do
             delete n Nothing s
-            emit s (n, "truncated" :: Text)
+            emit (TruncateR n)
             says ("Truncated " % n % ".")
         says "Done."
 
@@ -169,28 +167,28 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
 
         , mode "list"
             (pure List)
-            "List all credential names and their respective revisions."
+            "List credential names and their respective revisions."
             "The -u,--uri option takes a URI conforming to one of the following protocols"
 
         , mode "get"
             (Get <$> context <*> name <*> optional revision)
-            "Fetch and decrypt a specific revision of a credential."
+            "Fetch and decrypt a specific credential revision."
             "Defaults to the latest available revision, if --revision is not specified."
 
         , mode "put"
             (Put <$> key <*> context <*> name <*> input)
-            "Write and encrypt a new revision of a credential to the store."
+            "Write and encrypt a new credential revision."
             "You can supply the secret value as a string with --secret, or as \
             \a file path which contents' will be read by using --path."
 
         , mode "delete"
             (Delete <$> name <*> require revision <*> force)
-            "Remove a specific revision of a credential from the store."
+            "Remove a specific credential revision."
             "Foo"
 
         , mode "truncate"
             (Truncate <$> name <*> force)
-            "Remove all revisions of a credential except the latest from the store. ba r bar bar b barb bar"
+            "Truncate a specific credential's revisions."
             "Bar"
         ]
 
@@ -280,14 +278,16 @@ context = ctx $ textOption
 
 name :: Parser Name
 name = textOption
-     ( long "name"
+     ( short 'n'
+    <> long "name"
     <> metavar "STRING"
     <> describe "The unique name of the credential." Nothing Required
      )
 
 revision :: Fact -> Parser Revision
 revision r = textOption
-     ( long "revision"
+     ( short 'v'
+    <> long "revision"
     <> metavar "STRING"
     <> describe "The revision of the credential." Nothing r
      )

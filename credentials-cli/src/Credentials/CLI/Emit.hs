@@ -1,14 +1,10 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE ExtendedDefaultRules       #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE TupleSections        #-}
+
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 -- |
 -- Module      : Credentials.CLI.Emit
@@ -20,127 +16,97 @@
 --
 module Credentials.CLI.Emit where
 
-import qualified Blaze.ByteString.Builder             as BB
-import           Control.Exception.Lens
-import           Control.Lens                         (view, ( # ), (&), (.~),
-                                                       (<&>))
-import           Control.Monad.Catch
-import           Control.Monad.Reader
-import           Credentials                          as Cred
-import           Credentials.CLI.Protocol
+import           Credentials
 import           Credentials.CLI.Types
-import           Credentials.DynamoDB
-import           Data.Aeson                           (object, (.=))
-import           Data.Aeson.Encode                    (encodeToByteStringBuilder)
-import           Data.Aeson.Encode.Pretty             (encodePretty)
-import           Data.Aeson.Types                     (ToJSON (..))
-import qualified Data.Attoparsec.Text                 as A
-import           Data.Bifunctor
-import           Data.ByteString                      (ByteString)
-import           Data.ByteString.Builder              (Builder)
-import qualified Data.ByteString.Builder              as Build
-import qualified Data.ByteString.Char8                as BS8
-import           Data.Char
-import           Data.Conduit                         (($$))
-import qualified Data.Conduit.List                    as CL
-import           Data.Data
-import           Data.Data
-import           Data.Foldable                        (foldMap)
-import           Data.HashMap.Strict                  (HashMap)
-import           Data.HashMap.Strict                  (HashMap)
-import qualified Data.HashMap.Strict                  as Map
-import           Data.List                            (foldl', intersperse,
-                                                       sort)
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import           Data.List.NonEmpty                   (NonEmpty (..))
-import           Data.Maybe
-import           Data.String
-import qualified Data.Text                            as Text
-import qualified Data.Text.Encoding                   as Text
-import           GHC.Exts                             (toList)
-import           Network.AWS
+import           Data.Aeson               (ToJSON (..), object, (.=))
+import           Data.List                (foldl', intersperse)
+import           Data.List.NonEmpty       (NonEmpty (..))
+import           Data.Monoid
 import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Network.AWS.DynamoDB                 (dynamoDB)
-import           Network.AWS.S3                       (BucketName (..),
-                                                       ObjectVersionId, s3)
-import           Numeric.Natural
-import           Options.Applicative
-import           Options.Applicative.Builder.Internal (HasCompleter)
-import           System.Exit
-import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen         (Doc, Pretty)
-import           URI.ByteString
+import           Options.Applicative.Help hiding (string)
 
--- FIXME: Give types to the output rather the tuple-itis.
+data Status
+    = Deleted
+    | Truncated
 
-type Revisions = [(Name, NonEmpty Revision)]
+instance ToLog Status where
+    build = build . toText
 
-data Emit a = Emit { multiline :: !Bool, expose :: a }
+instance ToText Status where
+    toText = \case
+        Deleted   -> "deleted"
+        Truncated -> "truncated"
 
-instance ToText a => ToText (Emit a) where
-    toText = toText . expose
+data Emit = Emit { store' :: Store, result :: Result }
 
-instance ToLog (Emit a) => ToLog (Emit (Store, a)) where
-    build (Emit p (s, x)) = title % build (Emit p x)
+instance ToJSON Emit where
+    toJSON (Emit s r) = object [toText s .= r]
+
+instance Pretty Emit where
+    pretty (Emit s r) = pretty s <> char ':' .$. indent 2 (pretty r)
+
+data Result
+    = SetupR    Setup
+    | CleanupR
+    | PutR      Name Revision
+    | GetR      Name Value Revision
+    | DeleteR   Name Revision
+    | TruncateR Name
+    | ListR     Revisions
+
+instance ToLog Result where
+    build = \case
+        SetupR        s -> build s
+        CleanupR        -> build Deleted
+        PutR      _ r   -> build r
+        GetR      _ v _ -> build (toBS v)
+        DeleteR   {}    -> build Deleted
+        TruncateR {}    -> build Truncated
+        ListR        rs -> foldMap line rs
+          where
+            line (n, v :| vs) =
+                build n % "," % mconcat (intersperse "," $ map build (v:vs)) % "\n"
+
+instance ToJSON Result where
+    toJSON = \case
+        SetupR        s -> object ["status" =~ s]
+        CleanupR        -> object ["status" =~ Deleted]
+        PutR      n   r -> object ["name"   =~ n, "revision" =~ r]
+        GetR      n v r -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
+        DeleteR   n   r -> object ["name"   =~ n, "revision" =~ r, "status" =~ Deleted]
+        TruncateR n     -> object ["name"   =~ n, "status"   =~ Truncated]
+        ListR        rs -> object (map go rs)
       where
-        title | p         = build s % ":\n"
-              | otherwise = mempty
+        k =~ v = k .= toText v
 
-instance ToLog (Emit Text)     where build = build . toText
-instance ToLog (Emit Setup)    where build = build . toText
-instance ToLog (Emit Revision) where build = build . toText
+        go (n, v :| vs) = toText n .= map toText (v:vs)
 
-instance ToLog (Emit Revisions) where
-    build (Emit p rs) = go rs
+instance Pretty Result where
+    pretty = \case
+        SetupR        s -> stat s
+        CleanupR        -> stat Deleted
+        PutR      n   r -> name n .$. rev r
+        GetR      n v r -> name n .$. rev r .$. val v
+        DeleteR   n r   -> name n .$. rev r .$. stat Deleted
+        TruncateR n     -> name n .$. stat Truncated
+        ListR        rs -> go rs
       where
+        doc :: ToText a => a -> Doc
+        doc = text . string
+
+        name n = "name:"     <+> doc n
+        rev  r = "revision:" <+> doc r
+        stat s = "status:"   <+> doc s
+        val  v = "secret:"   <+> doc (toBS v)
+
         go []     = mempty
-        go [x]    = line x
-        go (x:xs) = line x <> "\n" <> go xs
+        go (r:rs) = foldl' (.$.) (name r) (map name rs)
+          where
+            name (n, v :| vs) = doc n <> ":" .$.
+                indent 2 (extractChunk (revs v vs))
 
-        line (n, v :| vs) =
-            x % n % ":" % y % v % " # latest" % foldMap (y %) vs
+            revs v vs = tabulate $
+                (item v, "# latest") : map ((,mempty) . item) vs
 
-        (x, y) | p         = ("  ", "\n    ")
-               | otherwise = ("",   "\n  ")
+            item x = "-" <+> doc x
 
-instance ToLog (Emit (Name, (Value, Revision))) where
-    build = mappend "  " . build . toBS . fst . snd . expose
-
-instance ToLog (Emit (Name, Revision, Text)) where
-    build (Emit _ (_, r, _)) = "  " <> build r
-
-instance ToLog (Emit (Name, Text)) where
-    build = mappend "  " . build . snd . expose
-
-instance ToJSON (Emit a) => ToJSON (Emit (Store, a)) where
-   toJSON (Emit p (s, x)) = object [toText s .= Emit p x]
-
-instance ToJSON (Emit Text)     where toJSON = toJSON . toText
-instance ToJSON (Emit Setup)    where toJSON = toJSON . toText
-instance ToJSON (Emit Revision) where toJSON = toJSON . toText
-
-instance ToJSON (Emit Revisions) where
-    toJSON = object . map f . expose
-      where
-        f (n, vs) = toText n .= map toText (toList vs)
-
-instance ToJSON (Emit (Name, (Value, Revision))) where
-    toJSON (Emit _ (n, (v, r))) = object
-        [ "name"     .= toText n
-        , "revision" .= toText r
-        , "secret"   .= Text.decodeUtf8 (toBS v)
-        ]
-
-instance ToJSON (Emit (Name, Revision, Text)) where
-    toJSON (Emit _ (n, r, s)) = object
-        [ "name"     .= toText n
-        , "revision" .= toText r
-        , "status"   .= s
-        ]
-
-instance ToJSON (Emit (Name, Text)) where
-    toJSON (Emit _ (n, s)) = object
-        [ "name"   .= toText n
-        , "status" .= s
-        ]
