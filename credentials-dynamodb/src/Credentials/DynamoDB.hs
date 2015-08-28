@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -6,7 +5,6 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
 
@@ -76,6 +74,7 @@ defaultTable = TableName "credential-store"
 
 -- FIXME:
 -- This is a bit over specified due to the coarseness of _ResourceNotFound.
+safe :: (ToText a, MonadCatch m) => a -> m r -> m r
 safe t = handling_ _ResourceNotFoundException (throwM err)
   where
     err = StorageMissing ("Table " <> toText t <> " doesn't exist.")
@@ -160,7 +159,7 @@ select' n mr t = send (mkNamed n t & revision mr) >>= result
         . (qKeyConditions  <>~ equals r)
         . (qConsistentRead ?~ True)
 
--- FIXME: revisit
+-- FIXME: revisit.
 delete' :: MonadAWS m
         => Name
         -> Maybe Revision
@@ -186,10 +185,10 @@ delete' n r t =
               where
                 f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
 
-                xs | n < 24    = take (n - 1) ys
+                xs | i < 24    = take (i - 1) ys
                    | otherwise = ys
                   where
-                    n = length ys
+                    i = length ys
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
