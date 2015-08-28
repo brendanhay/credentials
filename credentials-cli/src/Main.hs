@@ -37,6 +37,10 @@ default (Builder, Text)
 -- Large File Storage:
 --   have a pointer to something in S3, or actually store everything there?
 
+-- Streaming:
+--   for storage engines that support it, when specifying a filepath
+--   via the CLI, how to connect a conduit, what interface?
+
 -- Revision:
 --   an optional comment for revisions.
 

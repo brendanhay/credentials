@@ -1,10 +1,7 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE PackageImports             #-}
-{-# LANGUAGE TemplateHaskell            #-}
-{-# LANGUAGE ViewPatterns               #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports    #-}
+{-# LANGUAGE ViewPatterns      #-}
 
 -- |
 -- Module      : Credentials.Secret
@@ -20,32 +17,23 @@ module Credentials.Secret
     ) where
 
 import           Control.Exception.Lens
-import           Control.Lens            hiding (Context)
+import           Control.Lens           hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Credentials.Types
 import           "cryptonite" Crypto.Cipher.AES
 import           "cryptonite" Crypto.Cipher.Types
 import           "cryptonite" Crypto.Error
-import           "cryptonite" Crypto.Hash             hiding (Context)
-import           "cryptonite" Crypto.MAC.HMAC         hiding (Context)
-import           Data.Bifunctor
-import           Data.ByteArray
-import           Data.ByteArray.Encoding
-import           Data.ByteString         (ByteString)
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Char8   as BS8
-import           Data.HashMap.Strict     (HashMap)
-import           Data.Maybe
-import           Data.Monoid
-import qualified Data.Text               as Text
+import           "cryptonite" Crypto.MAC.HMAC        hiding (Context)
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString        as BS
+import qualified Data.Text              as Text
 import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.Error       (hasCode, hasStatus)
-import           Network.AWS.KMS         as KMS
+import           Network.AWS.Error      (hasCode, hasStatus)
+import           Network.AWS.KMS        as KMS
 import           Numeric.Natural
 
 encrypt :: (MonadThrow m, MonadAWS m, Typeable m)
@@ -87,7 +75,7 @@ decrypt :: (MonadThrow m, MonadAWS m)
 decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
     let rq = KMS.decrypt key & dEncryptionContext .~ context c
 
-    rs <- catching _InvalidCiphertextException (send rq) $ \e ->
+    rs <- catching_ _InvalidCiphertextException (send rq) $
         throwM . DecryptFailure c n $
             if blank c
                 then "Could not decrypt stored key using KMS. \

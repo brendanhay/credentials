@@ -1,8 +1,7 @@
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 
 -- |
 -- Module      : Credentials
@@ -24,25 +23,11 @@ module Credentials
     , module Credentials.Types
     ) where
 
-import           Control.Exception.Lens
-import           Control.Lens           hiding (Context)
-import           Control.Monad
 import           Control.Monad.Catch
 import           Credentials.Secret
 import           Credentials.Types
-import           Data.ByteString        (ByteString)
-import           Data.Either
-import           Data.HashMap.Strict    (HashMap)
-import           Data.List.NonEmpty     (NonEmpty (..))
-import           Data.Maybe
-import qualified Data.Text              as Text
 import           Data.Typeable
 import           Network.AWS
-import           Network.AWS
-import           Network.AWS            (Region)
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Numeric.Natural
 
 put :: (MonadThrow m, MonadAWS m, Storage m, Typeable m)
     => KeyId

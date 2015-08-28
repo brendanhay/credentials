@@ -1,8 +1,6 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -18,27 +16,18 @@ module Credentials.Types where
 
 import           Control.Exception.Lens
 import           Control.Lens            hiding (Context)
-import           Control.Monad
 import           Control.Monad.Catch
-import           Control.Monad.Trans.AWS
 import           Crypto.Hash             (SHA256)
 import           Crypto.MAC.HMAC         (HMAC)
-import           Data.ByteArray
 import           Data.ByteArray.Encoding
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as BS8
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as Map
 import           Data.List.NonEmpty      (NonEmpty (..))
-import           Data.Maybe
-import           Data.Monoid
-import           Data.String
-import qualified Data.Text               as Text
 import           Data.Typeable
-import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Numeric.Natural
 
 -- | The KMS master key identifier.
 newtype KeyId = KeyId Text
