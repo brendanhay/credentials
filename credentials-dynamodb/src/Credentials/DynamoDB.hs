@@ -55,7 +55,7 @@ instance MonadAWS DynamoDB where
     liftAWS = DynamoDB
 
 instance Storage DynamoDB where
-    type  Layer DynamoDB = AWS
+    type Layer  DynamoDB = AWS
     newtype Ref DynamoDB = TableName Text
         deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 

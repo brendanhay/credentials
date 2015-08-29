@@ -17,7 +17,6 @@
 module Credentials.CLI.Format where
 
 import           Credentials
-import           Credentials.CLI.Store    ()
 import           Credentials.CLI.Types
 import           Data.Aeson               (ToJSON (..), object, (.=))
 import           Data.List                (foldl', intersperse)

@@ -23,7 +23,6 @@ import           Credentials                     hiding (context)
 import           Credentials.CLI.Format
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
-import           Credentials.CLI.Store
 import           Credentials.CLI.Types
 import           Data.ByteString.Builder         (Builder)
 import           Data.Text                       (Text)
@@ -170,7 +169,7 @@ common = Options
         <> completes "The AWS region in which to operate."
              "The following regions are supported:"
                  (map (,mempty) unsafeEnum)
-v             Frankfurt Nothing
+             Frankfurt Nothing
          )
 
     <*> textOption

@@ -111,7 +111,7 @@ counter :: ToByteString a => a -> AES128 -> ByteString
 counter x aes = ctrCombine aes (ivAdd nullIV 128) (toBS x)
 
 splitKey :: ByteString -> (ByteString, ByteString)
-splitKey = BS.splitAt (2 * bytes)
+splitKey = BS.splitAt 32
 
 bytes :: Natural
 bytes = 64

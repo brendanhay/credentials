@@ -19,20 +19,23 @@ module Credentials.CLI.Types where
 import           Control.Monad.Catch
 import           Control.Monad.Reader
 import           Credentials
+import           Credentials.CLI.Types.Protocol
 import           Credentials.DynamoDB
-import qualified Data.Attoparsec.Text    as A
-import           Data.ByteString.Builder (Builder)
+import           Credentials.S3
+import qualified Data.Attoparsec.Text            as A
+import           Data.ByteString.Builder         (Builder)
 import           Data.Data
-import qualified Data.HashMap.Strict     as Map
-import           Data.List               (sort)
-import qualified Data.Text               as Text
+import qualified Data.HashMap.Strict             as Map
+import           Data.List                       (sort)
+import qualified Data.Text                       as Text
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
-import           Network.AWS.DynamoDB    (dynamoDB)
-import           Network.AWS.S3          (BucketName (..), s3)
+import           Network.AWS.DynamoDB            (dynamoDB)
+import           Network.AWS.S3                  (BucketName (..), s3)
 import           Options.Applicative
-import           URI.ByteString
+import           Options.Applicative.Help.Pretty (Pretty (..), text)
+import           URI.ByteString                  hiding (uriParser)
 
 data Force
     = NoPrompt
@@ -82,42 +85,86 @@ data Options = Options
 newtype App a = App { unApp :: ReaderT Options AWS a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadReader Options)
 
+runApp :: Env -> Options -> App a -> IO a
+runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
+
 instance MonadAWS App where
     liftAWS = App . lift
-
-type Store = Ref App
 
 instance Storage App where
     type Layer App = ReaderT Options AWS
     data Ref   App
-        = Table  URI (Ref DynamoDB)
-        | Bucket URI BucketName (Maybe Text)
+        = Table  URI TableName
+        | Bucket URI BucketNS
 
     layer = unApp
 
     setup = \case
-        Table _ t -> run (setup t)
+        Table  _ t -> runStore (setup t)
+        Bucket _ b -> runStore (setup b)
 
     cleanup = \case
-        Table _ t -> run (cleanup t)
+        Table  _ t -> runStore (cleanup t)
+        Bucket _ b -> runStore (cleanup b)
 
     listAll = \case
-        Table _ t -> run (listAll t)
+        Table  _ t -> runStore (listAll t)
+        Bucket _ b -> runStore (listAll b)
 
     insert n s = \case
-        Table _ t -> run (insert n s t)
+        Table  _ t -> runStore (insert n s t)
+        Bucket _ b -> runStore (insert n s b)
 
     select n v = \case
-        Table _ t -> run (select n v t)
+        Table  _ t -> runStore (select n v t)
+        Bucket _ b -> runStore (select n v b)
 
     delete n v = \case
-        Table _ t -> run (delete n v t)
+        Table  _ t -> runStore (delete n v t)
+        Bucket _ b -> runStore (delete n v b)
 
-run :: DynamoDB a -> App a
-run = App . lift . layer
+runStore :: (Storage m, Layer m ~ AWS) => m a -> App a
+runStore = App . lift . layer
 
-runApp :: Env -> Options -> App a -> IO a
-runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
+type Store = Ref App
+
+defaultStore :: Store
+defaultStore = Bucket u (BucketNS "sekkinen" (Just "credential-store"))
+  where
+    u = URI d Nothing ("/sekkinen/credential-store") mempty Nothing
+    d = Scheme "s3"
+
+-- defaultStore :: Store
+-- defaultStore = Table u defaultTable
+--   where
+--     u = URI d (Just a) ("/" <> toBS defaultTable) mempty Nothing
+--     d = Scheme "dynamo"
+--     a = Authority Nothing (Host "localhost") (Just (Port 8000))
+
+setStore :: HasEnv a => Options -> a -> a
+setStore c = configure f
+  where
+    f = case store c of
+        Table  u _ -> g u dynamoDB
+        Bucket u _ -> g u s3
+
+    g u | Just h <- host u = setEndpoint (secure u) h (port u)
+        | otherwise        = id
+
+instance FromText Store where
+    parser = uriParser
+
+instance FromURI Store where
+    fromURI u = Table u <$> fromURI u <|> Bucket u <$> fromURI u
+
+instance ToText Store where
+    toText = toText . serializeURI' . \case
+        Table  u _ -> u
+        Bucket u _ -> u
+
+instance Show   Store where show   = Text.unpack . toText
+instance Pretty Store where pretty = text . show
+instance ToLog  Store where build  = build . toText
 
 data Pair = Pair Text Text
 
