@@ -43,8 +43,7 @@ encrypt :: (MonadThrow m, MonadAWS m, Typeable m)
         -> Value
         -> m Secret
 encrypt k c n (Value x) = do
-    -- Generate a 64 byte key.
-    -- First 32 bytes for data encryption, last 32 bytes for HMAC.
+    -- Generate a key. First half for data encryption, last for HMAC.
     let rq = generateDataKey (toText k)
            & gdkNumberOfBytes     ?~ bytes
            & gdkEncryptionContext .~ context c
@@ -112,7 +111,7 @@ counter :: ToByteString a => a -> AES128 -> ByteString
 counter x aes = ctrCombine aes (ivAdd nullIV 128) (toBS x)
 
 splitKey :: ByteString -> (ByteString, ByteString)
-splitKey = BS.splitAt 32
+splitKey = BS.splitAt (2 * bytes)
 
 bytes :: Natural
 bytes = 64

@@ -1,11 +1,11 @@
 resolver:   nightly-2015-08-17
 flags:      {}
-extra-deps:
-  - uri-bytestring-0.1.7
+extra-deps: []
 packages:
   - credentials
   - credentials-cli
   - credentials-dynamodb
+  - credentials-s3
   - ../amazonka/amazonka
   - ../amazonka/core
   - ../amazonka/amazonka-dynamodb

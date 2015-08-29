@@ -8,7 +8,8 @@
 
 ## Description
 
-> TODO
+`credentials-cli` is a console application used to administer secure credentials
+via the [credentials](http://hackage.haskell.org/package/credentials) library.
 
 
 ## Usage
@@ -23,4 +24,4 @@ For any problems, comments, or feedback please create an issue [here on GitHub](
 
 ## Licence
 
-credentials-cli is released under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+`credentials-cli` is released under the [Mozilla Public License Version 2.0](http://www.mozilla.org/MPL/).

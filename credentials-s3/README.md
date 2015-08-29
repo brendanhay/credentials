@@ -1,4 +1,4 @@
-# Credentials
+# Credentials S3 Storage
 
 * [Description](#description)
 * [Usage](#usage)
@@ -8,7 +8,8 @@
 
 ## Description
 
-> TODO
+S3 offers highly-available storage for large file sizes for latency
+insensitive applications.
 
 
 ## Usage
@@ -23,4 +24,4 @@ For any problems, comments, or feedback please create an issue [here on GitHub](
 
 ## Licence
 
-`credentials` is released under the [Mozilla Public License Version 2.0](http://www.mozilla.org/MPL/).
+`credentials-s3` is released under the [Mozilla Public License Version 2.0](http://www.mozilla.org/MPL/).

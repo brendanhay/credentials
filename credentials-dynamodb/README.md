@@ -8,7 +8,8 @@
 
 ## Description
 
-> TODO
+DynamoDB offers highly-available storage with good latency characteristics,
+for file sizes of 200KB or less.
 
 
 ## Usage
@@ -23,4 +24,4 @@ For any problems, comments, or feedback please create an issue [here on GitHub](
 
 ## Licence
 
-credentials-dynamodb is released under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+`credentials-dynamodb` is released under the [Mozilla Public License Version 2.0](http://www.mozilla.org/MPL/).
