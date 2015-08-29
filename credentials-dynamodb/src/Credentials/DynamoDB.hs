@@ -23,25 +23,25 @@ module Credentials.DynamoDB
     ) where
 
 import           Control.Exception.Lens
-import           Control.Lens             hiding (Context)
+import           Control.Lens              hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Retry
 import           Credentials
-import           Credentials.DynamoDB.Val
+import           Credentials.DynamoDB.Item
 import           "cryptonite" Crypto.Hash
 import           Data.ByteArray.Encoding
-import qualified Data.ByteString          as BS
-import           Data.Conduit             hiding (await)
-import qualified Data.Conduit             as C
-import qualified Data.Conduit.List        as CL
-import qualified Data.HashMap.Strict      as Map
-import           Data.List.NonEmpty       (NonEmpty (..))
-import qualified Data.List.NonEmpty       as NE
+import qualified Data.ByteString           as BS
+import           Data.Conduit              hiding (await)
+import qualified Data.Conduit              as C
+import qualified Data.Conduit.List         as CL
+import qualified Data.HashMap.Strict       as Map
+import           Data.List.NonEmpty        (NonEmpty (..))
+import qualified Data.List.NonEmpty        as NE
 import           Data.Maybe
 import           Data.Ord
-import           Data.Text                (Text)
+import           Data.Text                 (Text)
 import           Data.Time.Clock.POSIX
 import           Data.Typeable
 import           Network.AWS
@@ -110,7 +110,7 @@ cleanup' t@(toText -> t') = do
 
 listAll' :: (MonadCatch m, MonadAWS m) => TableName -> m Revisions
 listAll' t = paginate (mkScan t)
-    =$= CL.concatMapM (traverse fromVal . view srsItems)
+    =$= CL.concatMapM (traverse decode . view srsItems)
     =$= CL.groupOn1 fst
     =$= CL.map group
      $$ CL.consume
@@ -131,8 +131,8 @@ insert' n s t = recovering policy [const cond] write
         v <- maybe 1 (+1) <$> latest n t
         r <- mkRevision v
         void . send $ putItem (toText t)
-            & piItem     .~ toVal n <> toVal v <> toVal r <> toVal s
-            & piExpected .~ Map.map (const expect) (toVal v <> toVal r)
+            & piItem     .~ encode n <> encode v <> encode r <> encode s
+            & piExpected .~ Map.map (const expect) (encode v <> encode r)
         return r
 
     cond = handler_ _ConditionalCheckFailedException (return True)
@@ -148,7 +148,7 @@ select' :: (MonadThrow m, MonadAWS m)
         -> m (Version, (Secret, Revision))
 select' n mr t = send (mkNamed n t & revision mr) >>= result
   where
-    result  = maybe missing fromVal . listToMaybe . view qrsItems
+    result  = maybe missing decode . listToMaybe . view qrsItems
     missing = throwM $ SecretMissing n mr (toText t)
 
     -- If revision is specified, the revisionIndex is used and
@@ -170,7 +170,7 @@ delete' n r t =
         Just x  -> do
             (v, _) <- select' n (Just x) t
             void . send $
-                deleteItem (toText t) & diKey .~ toVal n <> toVal v
+                deleteItem (toText t) & diKey .~ encode n <> encode v
 
         Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
           where
@@ -198,7 +198,7 @@ latest n t = do
     rs <- send (mkNamed n t & qConsistentRead ?~ True)
     case listToMaybe (rs ^. qrsItems) of
         Nothing -> pure Nothing
-        Just  m -> Just <$> fromVal m
+        Just  m -> Just <$> decode m
 
 exists :: MonadAWS m => TableName -> m Bool
 exists t = paginate listTables

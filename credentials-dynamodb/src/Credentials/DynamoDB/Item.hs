@@ -1,4 +1,5 @@
 {-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
@@ -9,14 +10,14 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 -- |
--- Module      : Credentials.DynamoDB.Val
+-- Module      : Credentials.DynamoDB.Item
 -- Copyright   : (c) 2013-2015 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.DynamoDB.Val where
+module Credentials.DynamoDB.Item where
 
 import           Control.Lens         hiding (Context)
 import           Control.Monad.Catch
@@ -36,8 +37,8 @@ import           Network.AWS.DynamoDB
 newtype Version = Version Integer
     deriving (Eq, Ord, Num, FromText, ToText, ToByteString)
 
-equals :: Val a => a -> HashMap Text Condition
-equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toVal
+equals :: Item a => a -> HashMap Text Condition
+equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . encode
 
 revisionIndex :: Text
 revisionIndex = revisionField
@@ -47,54 +48,56 @@ nameField     = name (Proxy :: Proxy Name)
 revisionField = name (Proxy :: Proxy Revision)
 versionField  = name (Proxy :: Proxy Version)
 
-class Val a where
-    toVal   :: a -> HashMap Text AttributeValue
-    fromVal :: MonadThrow m => HashMap Text AttributeValue -> m a
+class Item a where
+    encode :: a -> HashMap Text AttributeValue
+    decode :: MonadThrow m => HashMap Text AttributeValue -> m a
 
-    default toVal :: IsField a b => a -> HashMap Text AttributeValue
-    toVal = toField
+    default encode :: Attr a b => a -> HashMap Text AttributeValue
+    encode = toAttr
 
-    default fromVal :: (MonadThrow m, Monoid b, ToText b, IsField a b)
-                    => HashMap Text AttributeValue
-                    -> m a
-    fromVal = fromField
+    default decode :: (MonadThrow m, Monoid b, ToText b, Attr a b)
+                   => HashMap Text AttributeValue
+                   -> m a
+    decode = fromAttr
 
-instance (Val a, Val b) => Val (a, b) where
-    toVal (x, y) = toVal x <> toVal y
-    fromVal m    = (,) <$> fromVal m <*> fromVal m
+instance (Item a, Item b) => Item (a, b) where
+    encode (x, y) = encode x <> encode y
+    decode m      = (,) <$> decode m <*> decode m
 
-instance Val Secret where
-    toVal (Secret k h c) = toVal k <> toVal h <> toVal c
-    fromVal m = Secret <$> fromVal m <*> fromVal m <*> fromVal m
+instance Item Secret where
+    encode (Secret k h c) = encode k <> encode h <> encode c
+    decode m              = Secret <$> decode m <*> decode m <*> decode m
 
-instance Val Name
-instance Val Version
-instance Val Revision
-instance Val Key
-instance Val Cipher
-instance Val HMAC256
+instance Item Name
+instance Item Version
+instance Item Revision
+instance Item Key
+instance Item Cipher
+instance Item HMAC256
 
-class IsField a b | a -> b where
-    field :: Field a b
+data Meta a b = Meta Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
 
-instance IsField Name     Text       where field = Field "name"     avS text
-instance IsField Version  Text       where field = Field "version"  avN text
-instance IsField Revision ByteString where field = Field "revision" avB (bytes Revision)
-instance IsField Key      ByteString where field = Field "key"      avB (bytes Key)
-instance IsField Cipher   ByteString where field = Field "contents" avB (bytes Cipher)
-instance IsField HMAC256  ByteString where field = Field "hmac"     avB (bytes Hex)
+class Attr a b | a -> b where
+    meta :: Meta a b
 
-data Field a b = Field Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
+instance Attr Name     Text       where meta = Meta "name"     avS text
+instance Attr Version  Text       where meta = Meta "version"  avN text
+instance Attr Revision ByteString where meta = Meta "revision" avB (bytes Revision)
+instance Attr Key      ByteString where meta = Meta "key"      avB (bytes Key)
+instance Attr Cipher   ByteString where meta = Meta "contents" avB (bytes Cipher)
+instance Attr HMAC256  ByteString where meta = Meta "hmac"     avB (bytes Hex)
 
-toField :: IsField a b => a -> HashMap Text AttributeValue
-toField x = let Field k l p = field in [(k, attributeValue & l ?~ review p x)]
+toAttr :: Attr a b => a -> HashMap Text AttributeValue
+toAttr x = [(k, attributeValue & l ?~ review p x)]
+  where
+    Meta k l p = meta
 
-fromField :: (MonadThrow m, Monoid b, ToText b, IsField a b)
+fromAttr :: (MonadThrow m, Monoid b, ToText b, Attr a b)
           => HashMap Text AttributeValue
           -> m a
-fromField m = require >>= parse
+fromAttr m = require >>= parse
   where
-    Field k l p = field
+    Meta k l p = meta
 
     require = maybe missing pure (Map.lookup k m)
 
@@ -105,8 +108,8 @@ fromField m = require >>= parse
     missing = throwM (FieldMissing k (Map.keys m))
     invalid = throwM . FieldInvalid k . toText
 
-name :: forall a b. IsField a b => Proxy a -> Text
-name _ = let (Field k _ _) = field :: Field a b in k
+name :: forall a b. Attr a b => Proxy a -> Text
+name _ = let (Meta k _ _) = meta :: Meta a b in k
 
 text :: (FromText a, ToText a) => Prism' Text a
 text = prism' toText go
