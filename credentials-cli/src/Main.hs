@@ -19,12 +19,18 @@ module Main (main) where
 import           Control.Exception.Lens
 import           Control.Lens                    ((.~), (<&>))
 import           Control.Monad.Catch
+import           Control.Monad.Morph             (hoist)
+import           Control.Monad.Reader
 import           Credentials                     hiding (context)
 import           Credentials.CLI.Format
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
 import           Credentials.CLI.Types
 import           Data.ByteString.Builder         (Builder)
+import           Data.Conduit
+import           Data.Conduit.Lazy
+import qualified Data.Conduit.List               as CL
+import           Data.List.NonEmpty              (NonEmpty)
 import           Data.Text                       (Text)
 import           Network.AWS
 import           Options.Applicative             hiding (optional)
@@ -72,7 +78,7 @@ program Options{region = r, store = s} = \case
 
     List -> do
         says ("Listing contents of " % s % " in " % r % "...")
-        listAll s >>= emit . ListR
+        runLazy (listAll s) >>= emit . ListR
         says "Done."
 
     Put k c n i -> do

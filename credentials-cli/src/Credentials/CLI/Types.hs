@@ -17,6 +17,7 @@
 module Credentials.CLI.Types where
 
 import           Control.Monad.Catch
+import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Credentials
 import           Credentials.CLI.Types.Protocol
@@ -24,6 +25,8 @@ import           Credentials.DynamoDB
 import           Credentials.S3
 import qualified Data.Attoparsec.Text            as A
 import           Data.ByteString.Builder         (Builder)
+import           Data.Conduit
+import           Data.Conduit.Lazy
 import           Data.Data
 import qualified Data.HashMap.Strict             as Map
 import           Data.List                       (sort)
@@ -83,10 +86,21 @@ data Options = Options
     }
 
 newtype App a = App { unApp :: ReaderT Options AWS a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadReader Options)
+    deriving
+        ( Functor
+        , Applicative
+        , Monad
+        , MonadIO
+        , MonadThrow
+        , MonadCatch
+        , MonadReader Options
+        )
 
 runApp :: Env -> Options -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
+
+runLazy :: Source App a -> App [a]
+runLazy = App . lazyConsume . hoist unApp
 
 instance MonadAWS App where
     liftAWS = App . lift
@@ -108,8 +122,8 @@ instance Storage App where
         Bucket _ b -> runStore (cleanup b)
 
     listAll = \case
-        Table  _ t -> runStore (listAll t)
-        Bucket _ b -> runStore (listAll b)
+        Table  _ t -> hoist runStore (listAll t)
+        Bucket _ b -> hoist runStore (listAll b)
 
     insert n s = \case
         Table  _ t -> runStore (insert n s t)

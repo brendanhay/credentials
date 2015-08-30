@@ -21,16 +21,17 @@ import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials
+import           Data.Maybe
 import           Data.Text              (Text)
 -- import           "cryptonite" Crypto.Hash
 -- import           Data.ByteArray.Encoding
 -- import qualified Data.ByteString           as BS
--- import           Data.Conduit              hiding (await)
+import           Data.Conduit           hiding (await)
 -- import qualified Data.Conduit              as C
--- import qualified Data.Conduit.List         as CL
+import qualified Data.Conduit.List      as CL
 -- import qualified Data.HashMap.Strict       as Map
--- import           Data.List.NonEmpty        (NonEmpty (..))
--- import qualified Data.List.NonEmpty        as NE
+import           Data.List.NonEmpty     (NonEmpty (..))
+import qualified Data.List.NonEmpty     as NE
 -- import           Data.Maybe
 -- import           Data.Ord
 -- import           Data.Text                 (Text)
@@ -53,8 +54,9 @@ instance Storage S3 where
 
     layer        = runS3
     setup        = setup'
---     cleanup      = cleanup'
---     listAll    r = safe r (listAll'    r)
+    cleanup      = cleanup'
+--    listAll r = listAll' r
+
 --     insert n s r = safe r (insert' n s r)
 --     select n v r = safe r (select' n v r <&> snd)
 --     delete n v r = safe r (delete' n v r)
@@ -64,10 +66,51 @@ type BucketNS = Ref S3
 setup' :: MonadAWS m => BucketNS -> m Setup
 setup' (BucketNS b _) = do
     r <- liftAWS (view envRegion)
-    p <- catching_ _ServiceError (send (headBucket b) >> return True) (return False)
+    p <- exists b
+
+    -- instead of exists, get the bucket versioning status so it can be checked.
+
     unless p $ do
         void . send $ createBucket b
             & cbCreateBucketConfiguration ?~
                 (createBucketConfiguration & cbcLocationConstraint ?~ r)
         void $ await bucketExists (headBucket b)
+
+    void . send $ putBucketVersioning b
+        (versioningConfiguration
+            & vcStatus ?~ BVSEnabled)
+
     return $ if p then Exists else Created
+
+cleanup' :: MonadAWS m => BucketNS -> m ()
+cleanup' ns@(BucketNS b k) = do
+    p <- exists b
+    when p $ revisions 200 ns
+        =$= CL.map (\xs -> deleteObjects b (delete' & dObjects .~ xs))
+         $$ CL.mapM_ (void . send)
+
+-- ovKey
+-- ovVersionId
+-- ovIsLatest
+
+listAll' :: MonadAWS m => BucketNS -> Source m (Name, NonEmpty Revision)
+listAll' (BucketNS b k) = do
+--    xs <- revisions 200
+    undefined
+
+revisions :: MonadAWS m => Int -> BucketNS -> Source m [ObjectIdentifier]
+revisions n (BucketNS b k) = paginate rq
+    =$= CL.map (mapMaybe mk . view lovrsVersions)
+    =$= CL.filter (not . null)
+  where
+    rq = listObjectVersions b & lovPrefix .~ k & lovMaxKeys ?~ n
+
+    mk x = do
+        i <- x ^. ovKey
+        return $! objectIdentifier i
+            & oiVersionId .~ (x ^. ovVersionId)
+
+exists :: MonadAWS m => BucketName -> m Bool
+exists b =
+    catching_ _ServiceError
+        (send (headBucket b) >> return True) (return False)

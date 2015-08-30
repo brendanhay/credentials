@@ -22,6 +22,7 @@ import           Crypto.MAC.HMAC         (HMAC)
 import           Data.ByteArray.Encoding
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as BS8
+import           Data.Conduit            (Source)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as Map
 import           Data.List.NonEmpty      (NonEmpty (..))
@@ -96,17 +97,16 @@ instance ToText Setup where
 instance ToLog Setup where
     build = build . toText
 
-type Revisions = [(Name, NonEmpty Revision)]
-
 class Storage m where
     type Layer m :: * -> *
     data Ref   m :: *
 
     layer   :: m a -> Layer m a
 
-    setup   ::                           Ref m -> m Setup
-    cleanup ::                           Ref m -> m ()
-    listAll ::                           Ref m -> m Revisions
+    setup   :: Ref m -> m Setup
+    cleanup :: Ref m -> m ()
+    listAll :: Ref m -> Source m (Name, NonEmpty Revision)
+
     insert  :: Name -> Secret         -> Ref m -> m Revision
     select  :: Name -> Maybe Revision -> Ref m -> m (Secret, Revision)
     delete  :: Name -> Maybe Revision -> Ref m -> m ()

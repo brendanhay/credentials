@@ -108,12 +108,13 @@ cleanup' t@(toText -> t') = do
         void $ send (deleteTable t')
         void $ await tableNotExists (describeTable t')
 
-listAll' :: (MonadCatch m, MonadAWS m) => TableName -> m Revisions
+listAll' :: (MonadCatch m, MonadAWS m)
+         => TableName
+         -> Source m (Name, NonEmpty Revision)
 listAll' t = paginate (mkScan t)
     =$= CL.concatMapM (traverse decode . view srsItems)
     =$= CL.groupOn1 fst
     =$= CL.map group
-     $$ CL.consume
   where
     group ((k, r), rs) = (k, desc (r :| map snd rs))
 

@@ -52,7 +52,7 @@ data Result
     | GetR      Name Value Revision
     | DeleteR   Name Revision
     | TruncateR Name
-    | ListR     Revisions
+    | ListR     [(Name, NonEmpty Revision)]
 
 instance ToLog Result where
     build = \case
