@@ -18,7 +18,7 @@
 --
 module Credentials.DynamoDB
     ( DynamoDB
-    , TableName
+    , DynamoTable
     , defaultTable
     ) where
 
@@ -56,7 +56,7 @@ instance MonadAWS DynamoDB where
 
 instance Storage DynamoDB where
     type Layer  DynamoDB = AWS
-    newtype Ref DynamoDB = TableName Text
+    newtype Ref DynamoDB = DynamoTable Text
         deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
     layer        = runDynamo
@@ -67,10 +67,10 @@ instance Storage DynamoDB where
     select n v r = safe r (select' n v r <&> snd)
     delete n v r = safe r (delete' n v r)
 
-type TableName = Ref DynamoDB
+type DynamoTable = Ref DynamoDB
 
-defaultTable :: TableName
-defaultTable = TableName "credential-store"
+defaultTable :: DynamoTable
+defaultTable = DynamoTable "credential-store"
 
 -- FIXME:
 -- This is a bit over specified due to the coarseness of _ResourceNotFound.
@@ -79,7 +79,7 @@ safe t = handling_ _ResourceNotFoundException (throwM err)
   where
     err = StorageMissing ("Table " <> toText t <> " doesn't exist.")
 
-setup' :: MonadAWS m => TableName -> m Setup
+setup' :: MonadAWS m => DynamoTable -> m Setup
 setup' t@(toText -> t') = do
     p <- exists t
     unless p $ do
@@ -101,7 +101,7 @@ setup' t@(toText -> t') = do
         void $ await tableExists (describeTable t')
     return $ if p then Exists else Created
 
-cleanup' :: MonadAWS m => TableName -> m ()
+cleanup' :: MonadAWS m => DynamoTable -> m ()
 cleanup' t@(toText -> t') = do
     p <- exists t
     when p $ do
@@ -109,7 +109,7 @@ cleanup' t@(toText -> t') = do
         void $ await tableNotExists (describeTable t')
 
 listAll' :: (MonadCatch m, MonadAWS m)
-         => TableName
+         => DynamoTable
          -> Source m (Name, NonEmpty Revision)
 listAll' t = paginate (mkScan t)
     =$= CL.concatMapM (traverse decode . view srsItems)
@@ -124,7 +124,7 @@ listAll' t = paginate (mkScan t)
 insert' :: (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
         => Name
         -> Secret
-        -> TableName
+        -> DynamoTable
         -> m Revision
 insert' n s t = recovering policy [const cond] write
   where
@@ -145,7 +145,7 @@ insert' n s t = recovering policy [const cond] write
 select' :: (MonadThrow m, MonadAWS m)
         => Name
         -> Maybe Revision
-        -> TableName
+        -> DynamoTable
         -> m (Version, (Secret, Revision))
 select' n mr t = send (mkNamed n t & revision mr) >>= result
   where
@@ -164,7 +164,7 @@ select' n mr t = send (mkNamed n t & revision mr) >>= result
 delete' :: MonadAWS m
         => Name
         -> Maybe Revision
-        -> TableName
+        -> DynamoTable
         -> m ()
 delete' n r t =
     case r of
@@ -193,7 +193,7 @@ delete' n r t =
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
-       -> TableName
+       -> DynamoTable
        -> m (Maybe Version)
 latest n t = do
     rs <- send (mkNamed n t & qConsistentRead ?~ True)
@@ -201,16 +201,16 @@ latest n t = do
         Nothing -> pure Nothing
         Just  m -> Just <$> decode m
 
-exists :: MonadAWS m => TableName -> m Bool
+exists :: MonadAWS m => DynamoTable -> m Bool
 exists t = paginate listTables
     =$= CL.concatMap (view ltrsTableNames)
      $$ (isJust <$> findC (== toText t))
 
-mkScan :: TableName -> Scan
+mkScan :: DynamoTable -> Scan
 mkScan t = scan (toText t)
     & sAttributesToGet ?~ nameField :| [versionField, revisionField]
 
-mkNamed :: Name -> TableName -> Query
+mkNamed :: Name -> DynamoTable -> Query
 mkNamed n t = query (toText t)
     & qLimit            ?~ 1
     & qScanIndexForward ?~ False

@@ -22,7 +22,9 @@ import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Credentials
 import           Data.Maybe
+import           Data.Ord
 import           Data.Text              (Text)
+import           GHC.Exts
 -- import           "cryptonite" Crypto.Hash
 -- import           Data.ByteArray.Encoding
 -- import qualified Data.ByteString           as BS
@@ -49,26 +51,27 @@ instance MonadAWS S3 where
 
 instance Storage S3 where
     type Layer S3 = AWS
-    data Ref   S3 = BucketNS BucketName (Maybe Text)
+    data Ref   S3 = S3Bucket BucketName (Maybe Text)
         deriving (Eq, Ord, Show)
 
-    layer        = runS3
-    setup        = setup'
-    cleanup      = cleanup'
---    listAll r = listAll' r
+    layer   = runS3
+    setup   = setup'
+    cleanup = cleanup'
+    listAll = listAll'
 
---     insert n s r = safe r (insert' n s r)
+--    insert n s r = safe r (insert' n s r)
 --     select n v r = safe r (select' n v r <&> snd)
 --     delete n v r = safe r (delete' n v r)
 
-type BucketNS = Ref S3
+type S3Bucket = Ref S3
 
-setup' :: MonadAWS m => BucketNS -> m Setup
-setup' (BucketNS b _) = do
+setup' :: MonadAWS m => S3Bucket -> m Setup
+setup' (S3Bucket b _) = do
     r <- liftAWS (view envRegion)
     p <- exists b
 
-    -- instead of exists, get the bucket versioning status so it can be checked.
+    -- FIXME: instead of exists, get the bucket versioning status
+    -- so it can be checked to be set correctly.
 
     unless p $ do
         void . send $ createBucket b
@@ -82,33 +85,65 @@ setup' (BucketNS b _) = do
 
     return $ if p then Exists else Created
 
-cleanup' :: MonadAWS m => BucketNS -> m ()
-cleanup' ns@(BucketNS b k) = do
+cleanup' :: MonadAWS m => S3Bucket -> m ()
+cleanup' ns@(S3Bucket b _) = do
     p <- exists b
-    when p $ revisions 200 ns
-        =$= CL.map (\xs -> deleteObjects b (delete' & dObjects .~ xs))
-         $$ CL.mapM_ (void . send)
+    when p $ revisions 200 ns $$ CL.mapM_ (void . send . del)
+  where
+    del xs = deleteObjects b $
+        delete' & dQuiet   ?~ True
+                & dObjects .~ map key xs
+
+    key (k, v) = objectIdentifier k & oiVersionId ?~ v
+
+listAll' :: MonadAWS m => S3Bucket -> Source m (Name, NonEmpty Revision)
+listAll' ns = revisions 200 ns
+    =$= CL.concat
+    =$= CL.groupOn1 fst
+    =$= CL.map group
+  where
+    group ((n, r), rs) = (name n, rev r :| map (rev . snd) rs)
+
+    name = Name     . toText
+    rev  = Revision . toBS
+
+insert' :: MonadAWS m
+        => Name
+        -> Secret
+        -> S3Bucket
+        -> m Revision
+insert' n s ns = undefined -- do
+--    putObject
+
+  -- where
+  --   write = do
+  --       r <- mkRevision v
+  --       void . send $ putItem (toText t)
+  --           & piItem     .~ encode n <> encode v <> encode r <> encode s
+  --           & piExpected .~ Map.map (const expect) (encode v <> encode r)
+  --       return r
+
+  --   cond = handler_ _ConditionalCheckFailedException (return True)
+
+  --   expect = expectedAttributeValue & eavExists ?~ False
+
+  --   policy = constantDelay 1000 <> limitRetries 5
 
 -- ovKey
 -- ovVersionId
 -- ovIsLatest
 
-listAll' :: MonadAWS m => BucketNS -> Source m (Name, NonEmpty Revision)
-listAll' (BucketNS b k) = do
---    xs <- revisions 200
-    undefined
-
-revisions :: MonadAWS m => Int -> BucketNS -> Source m [ObjectIdentifier]
-revisions n (BucketNS b k) = paginate rq
+revisions :: MonadAWS m
+          => Int
+          -> S3Bucket
+          -> Source m [(ObjectKey, ObjectVersionId)]
+revisions n (S3Bucket b k) = paginate rq
     =$= CL.map (mapMaybe mk . view lovrsVersions)
     =$= CL.filter (not . null)
   where
     rq = listObjectVersions b & lovPrefix .~ k & lovMaxKeys ?~ n
 
-    mk x = do
-        i <- x ^. ovKey
-        return $! objectIdentifier i
-            & oiVersionId .~ (x ^. ovVersionId)
+    mk x = (,) <$> x ^. ovKey <*> x ^. ovVersionId
 
 exists :: MonadAWS m => BucketName -> m Bool
 exists b =

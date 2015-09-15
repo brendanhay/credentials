@@ -47,17 +47,17 @@ newtype Revision = Revision ByteString
 
 -- | An unencrypted secret value.
 newtype Value = Value ByteString
-    deriving (Eq, Ord, FromText, ToByteString)
+    deriving (Eq, Ord, ToByteString)
 
 instance Show Value where
     show = const "Value *****"
 
 -- | An encryption context.
-newtype Context = Context { context :: HashMap Text Text }
+newtype Context = Context { fromContext :: HashMap Text Text }
     deriving (Eq, Show, Monoid)
 
-blank :: Context -> Bool
-blank = Map.null . context
+blankContext :: Context -> Bool
+blankContext = Map.null . fromContext
 
 -- | Wrapped key.
 newtype Key = Key ByteString deriving (ToByteString)

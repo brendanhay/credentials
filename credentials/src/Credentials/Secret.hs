@@ -24,12 +24,14 @@ import           Credentials.Types
 import           "cryptonite" Crypto.Cipher.AES
 import           "cryptonite" Crypto.Cipher.Types
 import           "cryptonite" Crypto.Error
+import           "cryptonite" Crypto.Hash            hiding (Context)
 import           "cryptonite" Crypto.MAC.HMAC        hiding (Context)
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
+import           Data.Conduit
 import qualified Data.Text              as Text
 import           Data.Typeable
-import           Network.AWS
+import           Network.AWS            hiding (await)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Network.AWS.Error      (hasCode, hasStatus)
@@ -42,11 +44,11 @@ encrypt :: (MonadThrow m, MonadAWS m, Typeable m)
         -> Name
         -> Value
         -> m Secret
-encrypt k c n (Value x) = do
+encrypt k c n x = do
     -- Generate a key. First half for data encryption, last for HMAC.
     let rq = generateDataKey (toText k)
            & gdkNumberOfBytes     ?~ bytes
-           & gdkEncryptionContext .~ context c
+           & gdkEncryptionContext .~ fromContext c
 
     rs <- catches (send rq)
         [ handler (_ServiceError . hasStatus 400 . hasCode "NotFound") $
@@ -72,11 +74,11 @@ decrypt :: (MonadThrow m, MonadAWS m)
         -> Secret
         -> m Value
 decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
-    let rq = KMS.decrypt key & dEncryptionContext .~ context c
+    let rq = KMS.decrypt key & dEncryptionContext .~ fromContext c
 
     rs <- catching_ _InvalidCiphertextException (send rq) $
         throwM . DecryptFailure c n $
-            if blank c
+            if blankContext c
                 then "Could not decrypt stored key using KMS. \
                      \The credential may require an ecryption context."
                 else  "Could not decrypt stored key using KMS. \
@@ -91,22 +93,15 @@ decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
     unless (expect == actual) $
         throwM (IntegrityFailure n expect actual)
 
+    undefined
+
     Value . counter ctext
         <$> cipher (DecryptFailure c n) dataKey
-
--- Decrypted plaintext data. This value may not be returned if the customer
--- master key is not available or if you didn't have permission to use it.
-plaintext :: (MonadThrow m, Exception e)
-          => (Text -> e)
-          -> DecryptResponse
-          -> m ByteString
-plaintext e = maybe (throwM (e msg)) pure . (^. drsPlaintext)
-  where
-    msg = "Decrypted plaintext data not available from KMS."
 
 cipher :: (MonadThrow m, Exception e) => (Text -> e) -> ByteString -> m AES128
 cipher e = onCryptoFailure (throwM . e . Text.pack . show) pure . cipherInit
 
+-- FIXME: revisit IV use/initialisation.
 counter :: ToByteString a => a -> AES128 -> ByteString
 counter x aes = ctrCombine aes (ivAdd nullIV 128) (toBS x)
 
@@ -115,3 +110,14 @@ splitKey = BS.splitAt 32
 
 bytes :: Natural
 bytes = 64
+
+-- Decrypted plaintext data. This value may not be returned if the customer
+-- master key is not available or if you didn't have permission to use it.
+plaintext :: (MonadThrow m, Exception e)
+          => (Text -> e)
+          -> DecryptResponse
+          -> m ByteString
+plaintext e rs =
+    maybe (throwM (e "Decrypted plaintext data not available from KMS."))
+          pure
+          (rs ^. drsPlaintext)
