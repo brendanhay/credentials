@@ -1,4 +1,4 @@
-resolver:   nightly-2015-08-27
+resolver:   nightly-2015-09-13
 flags:      {}
 extra-deps:
   - uri-bytestring-0.1.7
@@ -12,3 +12,4 @@ packages:
   - ../amazonka/amazonka-dynamodb
   - ../amazonka/amazonka-kms
   - ../amazonka/amazonka-s3
+  - ../amazonka/amazonka-s3-encryption
