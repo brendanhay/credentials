@@ -108,8 +108,8 @@ instance MonadAWS App where
 instance Storage App where
     type Layer App = ReaderT Options AWS
     data Ref   App
-        = Table  URI TableName
-        | Bucket URI BucketNS
+        = Table  URI DynamoTable
+        | Bucket URI S3Bucket
 
     layer = unApp
 
@@ -125,17 +125,17 @@ instance Storage App where
         Table  _ t -> hoist runStore (listAll t)
         Bucket _ b -> hoist runStore (listAll b)
 
-    insert n s = \case
-        Table  _ t -> runStore (insert n s t)
-        Bucket _ b -> runStore (insert n s b)
-
-    select n v = \case
-        Table  _ t -> runStore (select n v t)
-        Bucket _ b -> runStore (select n v b)
-
     delete n v = \case
         Table  _ t -> runStore (delete n v t)
         Bucket _ b -> runStore (delete n v b)
+
+    insert k c n s = \case
+        Table  _ t -> runStore (insert k c n s t)
+        Bucket _ b -> runStore (insert k c n s b)
+
+    select c n v = \case
+        Table  _ t -> runStore (select c n v t)
+        Bucket _ b -> runStore (select c n v b)
 
 runStore :: (Storage m, Layer m ~ AWS) => m a -> App a
 runStore = App . lift . layer
@@ -143,7 +143,7 @@ runStore = App . lift . layer
 type Store = Ref App
 
 defaultStore :: Store
-defaultStore = Bucket u (BucketNS "sekkinen" (Just "credential-store"))
+defaultStore = Bucket u (S3Bucket "sekkinen" defaultPrefix)
   where
     u = URI d Nothing ("/sekkinen/credential-store") mempty Nothing
     d = Scheme "s3"

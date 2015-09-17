@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
 
@@ -30,6 +31,7 @@ import           Control.Monad.IO.Class
 import           Control.Retry
 import           Credentials
 import           Credentials.DynamoDB.Item
+import           Credentials.Secret        as Secret
 import           "cryptonite" Crypto.Hash
 import           Data.ByteArray.Encoding
 import qualified Data.ByteString           as BS
@@ -63,9 +65,15 @@ instance Storage DynamoDB where
     setup        = setup'
     cleanup      = cleanup'
     listAll    r = safe r (listAll'    r)
-    insert n s r = safe r (insert' n s r)
-    select n v r = safe r (select' n v r <&> snd)
     delete n v r = safe r (delete' n v r)
+
+    insert k c n s r = do
+        x <- encrypt k c n s
+        safe r (insert' n x r)
+
+    select c n v r = do
+        (_, (x, y)) <- safe r (select' n v r)
+        (,y) <$> decrypt c n x
 
 type DynamoTable = Ref DynamoDB
 
@@ -74,7 +82,7 @@ defaultTable = DynamoTable "credential-store"
 
 -- FIXME:
 -- This is a bit over specified due to the coarseness of _ResourceNotFound.
-safe :: (ToText a, MonadCatch m) => a -> m r -> m r
+safe :: (ToText a, MonadCatch m) => a -> m b -> m b
 safe t = handling_ _ResourceNotFoundException (throwM err)
   where
     err = StorageMissing ("Table " <> toText t <> " doesn't exist.")

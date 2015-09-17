@@ -61,7 +61,7 @@ emit r = do
     liftIO . hPutBuilder stdout $
         case f of
             Pretty -> build (encodePretty e) <> "\n"
-            JSON   -> encodeToByteStringBuilder (toJSON e)
+            JSON   -> encodeToBuilder (toJSON e)
             Echo   -> build r
             Print  -> stringUtf8
                 (displayS (renderPretty 0.4 80 (pretty e)) "") <> "\n"

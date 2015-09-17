@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -27,6 +28,7 @@ import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as Map
 import           Data.List.NonEmpty      (NonEmpty (..))
 import           Data.Typeable
+import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 
@@ -47,7 +49,7 @@ newtype Revision = Revision ByteString
 
 -- | An unencrypted secret value.
 newtype Value = Value ByteString
-    deriving (Eq, Ord, ToByteString)
+    deriving (Eq, Ord, FromText, ToText, ToByteString)
 
 instance Show Value where
     show = const "Value *****"
@@ -65,7 +67,10 @@ newtype Key = Key ByteString deriving (ToByteString)
 -- | Encrypted ciphertext.
 newtype Cipher = Cipher ByteString deriving (ToByteString)
 
--- | HMAC SHA256 of the Ciphertext, possibly hex-encoded.
+-- | An encrypted secret.
+data Secret = Secret Key Cipher HMAC256
+
+-- | HMAC SHA256, possibly hex-encoded.
 data HMAC256
     = Hex    ByteString
     | Digest (HMAC SHA256)
@@ -80,9 +85,6 @@ instance ToByteString HMAC256 where
 
 instance Show HMAC256 where
     show = BS8.unpack . toBS
-
--- | An encrypted secret.
-data Secret = Secret Key Cipher HMAC256
 
 data Setup
     = Created
@@ -106,10 +108,10 @@ class Storage m where
     setup   :: Ref m -> m Setup
     cleanup :: Ref m -> m ()
     listAll :: Ref m -> Source m (Name, NonEmpty Revision)
-
-    insert  :: Name -> Secret         -> Ref m -> m Revision
-    select  :: Name -> Maybe Revision -> Ref m -> m (Secret, Revision)
     delete  :: Name -> Maybe Revision -> Ref m -> m ()
+
+    insert  :: KeyId -> Context -> Name -> Value          -> Ref m -> m Revision
+    select  ::          Context -> Name -> Maybe Revision -> Ref m -> m (Value, Revision)
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)

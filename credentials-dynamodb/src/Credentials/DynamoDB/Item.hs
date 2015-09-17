@@ -22,6 +22,7 @@ module Credentials.DynamoDB.Item where
 import           Control.Lens         hiding (Context)
 import           Control.Monad.Catch
 import           Credentials
+import qualified Data.Aeson           as JS
 import           Data.ByteString      (ByteString)
 import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
@@ -86,6 +87,7 @@ instance Attr Revision ByteString where meta = Meta "revision" avB (bytes Revisi
 instance Attr Key      ByteString where meta = Meta "key"      avB (bytes Key)
 instance Attr Cipher   ByteString where meta = Meta "contents" avB (bytes Cipher)
 instance Attr HMAC256  ByteString where meta = Meta "hmac"     avB (bytes Hex)
+instance Attr Context  JS.Value   where meta = Meta "matdesc"  avM undefined
 
 toAttr :: Attr a b => a -> HashMap Text AttributeValue
 toAttr x = [(k, attributeValue & l ?~ review p x)]

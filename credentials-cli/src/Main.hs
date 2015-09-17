@@ -84,7 +84,7 @@ program Options{region = r, store = s} = \case
     Put k c n i -> do
         says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
         x <- load i
-        put k c n x s >>= emit . PutR n
+        insert k c n x s >>= emit . PutR n
         says "Done."
 
     Get c n v -> do
@@ -93,7 +93,7 @@ program Options{region = r, store = s} = \case
             Nothing -> pure ()
             Just x  -> say (" revision " % x % " of")
         says (" " % n % " from " % s % " in " % r % "...")
-        get c n v s >>= emit . uncurry (GetR n)
+        select c n v s >>= emit . uncurry (GetR n)
         says "Done."
 
     Delete n v f -> do

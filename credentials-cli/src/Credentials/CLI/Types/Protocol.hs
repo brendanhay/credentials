@@ -58,7 +58,7 @@ instance FromURI DynamoTable where
 instance FromURI S3Bucket where
     fromURI u = do
         scheme "s3" u
-        BucketNS <$> ensure "Bucket name cannot be empty." b <*> pure (prefix p)
+        S3Bucket <$> ensure "Bucket name cannot be empty." b <*> pure (prefix p)
       where
         (b, p) = Text.break (== '/') (path u)
 

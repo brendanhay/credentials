@@ -1,4 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 -- |
@@ -16,32 +19,31 @@ module Credentials.S3 where
     -- ) where
 
 import           Control.Exception.Lens
-import           Control.Lens
+import           Control.Lens                    hiding (Context)
 import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.AWS         (AWSConstraint)
+import           Control.Monad.Trans.Class
+import           Control.Monad.Trans.Reader
 import           Credentials
+import           Data.Conduit                    hiding (await)
+import qualified Data.Conduit.List               as CL
+import           Data.List.NonEmpty              (NonEmpty (..))
+import qualified Data.List.NonEmpty              as NE
 import           Data.Maybe
+import           Data.Monoid
 import           Data.Ord
-import           Data.Text              (Text)
+import           Data.Text                       (Text)
+import qualified Data.Text                       as Text
 import           GHC.Exts
--- import           "cryptonite" Crypto.Hash
--- import           Data.ByteArray.Encoding
--- import qualified Data.ByteString           as BS
-import           Data.Conduit           hiding (await)
--- import qualified Data.Conduit              as C
-import qualified Data.Conduit.List      as CL
--- import qualified Data.HashMap.Strict       as Map
-import           Data.List.NonEmpty     (NonEmpty (..))
-import qualified Data.List.NonEmpty     as NE
--- import           Data.Maybe
--- import           Data.Ord
--- import           Data.Text                 (Text)
--- import           Data.Time.Clock.POSIX
--- import           Data.Typeable
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.S3
+import           Network.AWS.S3.Encryption
+import           Network.AWS.S3.Encryption.Types
+
+-- FIXME: store similar envelope on dynamodb credentials, namely, add context/description
 
 newtype S3 a = S3 { runS3 :: AWS a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
@@ -49,6 +51,7 @@ newtype S3 a = S3 { runS3 :: AWS a }
 instance MonadAWS S3 where
     liftAWS = S3
 
+-- FIXME: Revist context/materials for s3-encryption.
 instance Storage S3 where
     type Layer S3 = AWS
     data Ref   S3 = S3Bucket BucketName (Maybe Text)
@@ -58,10 +61,12 @@ instance Storage S3 where
     setup   = setup'
     cleanup = cleanup'
     listAll = listAll'
-
---    insert n s r = safe r (insert' n s r)
---     select n v r = safe r (select' n v r <&> snd)
+    insert  = insert'
+    select  = select'
 --     delete n v r = safe r (delete' n v r)
+
+defaultPrefix :: Maybe Text
+defaultPrefix = Just "credential-store"
 
 type S3Bucket = Ref S3
 
@@ -108,26 +113,33 @@ listAll' ns = revisions 200 ns
     rev  = Revision . toBS
 
 insert' :: MonadAWS m
-        => Name
-        -> Secret
+        => KeyId
+        -> Context
+        -> Name
+        -> Value
         -> S3Bucket
         -> m Revision
-insert' n s ns = undefined -- do
---    putObject
+insert' k c n (Value s) (S3Bucket b p) = do
+    rs <- withKey k c . encrypt $ putObject b (nameToKey n p) (toBody s)
+    maybeRevision n (rs ^. porsVersionId)
 
-  -- where
-  --   write = do
-  --       r <- mkRevision v
-  --       void . send $ putItem (toText t)
-  --           & piItem     .~ encode n <> encode v <> encode r <> encode s
-  --           & piExpected .~ Map.map (const expect) (encode v <> encode r)
-  --       return r
+select' :: (MonadAWS m)
+        => Context
+        -> Name
+        -> Maybe Revision
+        -> S3Bucket
+        -> m (Value, Revision)
+select' c n mr (S3Bucket b p) =
+    withoutKey c (decrypt (getObject b (nameToKey n p) & revision mr))
+        >>= result
+  where
+    result rs = do
+        r  <- maybeRevision n (rs ^. gorsVersionId)
+        bs <- mconcat <$> liftAWS (sinkBody (rs ^. gorsBody) CL.consume)
+        return (Value bs, r)
 
-  --   cond = handler_ _ConditionalCheckFailedException (return True)
-
-  --   expect = expectedAttributeValue & eavExists ?~ False
-
-  --   policy = constantDelay 1000 <> limitRetries 5
+    revision Nothing  = id
+    revision (Just r) = goVersionId ?~ ObjectVersionId (toText r)
 
 -- ovKey
 -- ovVersionId
@@ -145,7 +157,27 @@ revisions n (S3Bucket b k) = paginate rq
 
     mk x = (,) <$> x ^. ovKey <*> x ^. ovVersionId
 
+maybeRevision n Nothing  = throwM (SecretMissing n Nothing "Unable to insert new revision.")
+maybeRevision _ (Just v) = return $! Revision (toBS v)
+
 exists :: MonadAWS m => BucketName -> m Bool
 exists b =
     catching_ _ServiceError
         (send (headBucket b) >> return True) (return False)
+
+withoutKey :: MonadAWS m => Context -> ReaderT KeyEnv AWS a -> m a
+withoutKey = withKey (KeyId "dummy")
+
+withKey :: MonadAWS m => KeyId -> Context -> ReaderT KeyEnv AWS a -> m a
+withKey k c m = liftAWS $ do
+    e <- view environment
+    runReaderT m . KeyEnv e
+        $ kmsKey (toText k)
+        & description .~ Description (fromContext c)
+
+nameToKey :: Name -> Maybe Text -> ObjectKey
+nameToKey n = \case
+    Nothing -> ObjectKey name
+    Just p  -> ObjectKey (Text.dropWhileEnd (== '/') p <> "/" <> name)
+  where
+    name = Text.dropWhile (== '/') (toText n)

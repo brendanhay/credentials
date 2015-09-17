@@ -1,6 +1,8 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports    #-}
+{-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE ViewPatterns      #-}
 
 -- |
@@ -12,8 +14,8 @@
 -- Portability : non-portable (GHC extensions)
 --
 module Credentials.Secret
-    ( Credentials.Secret.encrypt
-    , Credentials.Secret.decrypt
+    ( encrypt
+    , decrypt
     ) where
 
 import           Control.Exception.Lens
@@ -35,10 +37,11 @@ import           Network.AWS            hiding (await)
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
 import           Network.AWS.Error      (hasCode, hasStatus)
-import           Network.AWS.KMS        as KMS
+import           Network.AWS.KMS        hiding (decrypt, encrypt)
+import qualified Network.AWS.KMS        as KMS
 import           Numeric.Natural
 
-encrypt :: (MonadThrow m, MonadAWS m, Typeable m)
+encrypt :: (MonadAWS m, Typeable m)
         => KeyId
         -> Context
         -> Name
@@ -68,7 +71,7 @@ encrypt k c n x = do
         (Cipher ctext)
         (Digest (hmac hmacKey ctext))
 
-decrypt :: (MonadThrow m, MonadAWS m)
+decrypt :: MonadAWS m
         => Context
         -> Name
         -> Secret
@@ -92,8 +95,6 @@ decrypt c n (Secret (toBS -> key) (toBS -> ctext) actual) = do
 
     unless (expect == actual) $
         throwM (IntegrityFailure n expect actual)
-
-    undefined
 
     Value . counter ctext
         <$> cipher (DecryptFailure c n) dataKey
