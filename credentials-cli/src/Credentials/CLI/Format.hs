@@ -19,9 +19,11 @@ module Credentials.CLI.Format where
 import           Credentials
 import           Credentials.CLI.Types
 import           Data.Aeson               (ToJSON (..), object, (.=))
+import           Data.Bifunctor
 import           Data.List                (foldl', intersperse)
 import           Data.List.NonEmpty       (NonEmpty (..))
 import           Data.Monoid
+import qualified Data.Text                as Text
 import           Network.AWS.Data
 import           Options.Applicative.Help hiding (string)
 
@@ -91,9 +93,6 @@ instance Pretty Result where
         TruncateR n     -> name n .$. stat Truncated
         ListR        rs -> go rs
       where
-        doc :: ToText a => a -> Doc
-        doc = text . string
-
         name n = "name:"     <+> doc n
         rev  r = "revision:" <+> doc r
         stat s = "status:"   <+> doc s
@@ -105,7 +104,17 @@ instance Pretty Result where
             f (n, v :| vs) = doc n <> ":" .$.
                 indent 2 (extractChunk (revs v vs))
 
-            revs v vs = tabulate $
-                (item v, "# latest") : map ((,mempty) . item) vs
+            revs v vs = table $ (v, "# latest") : map ((,mempty)) vs
 
-            item x = "-" <+> doc x
+        table [] = mempty
+        table xs = pure $ vcat
+            [indent 2 (fillBreak n (item k) <+> v) | (k, v) <- ys]
+          where
+            n  = maximum (map (Text.length . fst) ys) + 2
+            ys = map (first toText) xs
+
+        doc :: ToText a => a -> Doc
+        doc = text . string
+
+        item x = "-" <+> doc x
+
