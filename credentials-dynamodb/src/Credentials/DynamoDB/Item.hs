@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE ViewPatterns               #-}
 
 -- |
@@ -22,7 +23,6 @@ module Credentials.DynamoDB.Item where
 import           Control.Lens         hiding (Context)
 import           Control.Monad.Catch
 import           Credentials
-import qualified Data.Aeson           as JS
 import           Data.ByteString      (ByteString)
 import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
@@ -76,21 +76,42 @@ instance Item Key
 instance Item Cipher
 instance Item HMAC256
 
-data Meta a b = Meta Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
+data Meta a b = Meta Text (Traversal' AttributeValue b) (Prism' b a)
 
 class Attr a b | a -> b where
     meta :: Meta a b
 
-instance Attr Name     Text       where meta = Meta "name"     avS text
-instance Attr Version  Text       where meta = Meta "version"  avN text
-instance Attr Revision ByteString where meta = Meta "revision" avB (bytes Revision)
-instance Attr Key      ByteString where meta = Meta "key"      avB (bytes Key)
-instance Attr Cipher   ByteString where meta = Meta "contents" avB (bytes Cipher)
-instance Attr HMAC256  ByteString where meta = Meta "hmac"     avB (bytes Hex)
-instance Attr Context  JS.Value   where meta = Meta "matdesc"  avM undefined
+instance Attr Name Text where
+    meta = Meta "name" (avS . traverse) text
+
+instance Attr Version Text where
+    meta = Meta "version" (avN . traverse) text
+
+instance Attr Revision ByteString where
+    meta = Meta "revision" (avB . traverse) (iso Revision toBS)
+
+instance Attr Key ByteString where
+    meta = Meta "key" (avB . traverse) (iso Key toBS)
+
+instance Attr Cipher ByteString where
+    meta = Meta "contents" (avB . traverse) (iso Cipher toBS)
+
+instance Attr HMAC256 ByteString where
+    meta = Meta "hmac" (avB . traverse) (iso Hex toBS)
+
+instance Attr Context (HashMap Text Text) where
+     meta = Meta "matdesc" (lens f g) (iso Context fromContext)
+       where
+         f = Map.fromList . mapMaybe q . Map.toList . view avM
+           where
+             q (k, v) = (k,) <$> v ^. avS
+
+         g s x = s & avM .~ Map.map q x
+           where
+             q a = attributeValue & avS ?~ a
 
 toAttr :: Attr a b => a -> HashMap Text AttributeValue
-toAttr x = [(k, attributeValue & l ?~ review p x)]
+toAttr x = [(k, attributeValue & l .~ review p x)]
   where
     Meta k l p = meta
 
@@ -103,9 +124,7 @@ fromAttr m = require >>= parse
 
     require = maybe missing pure (Map.lookup k m)
 
-    parse (attr -> x) = maybe (invalid x) pure (preview p x)
-
-    attr = fromMaybe mempty . view l
+    parse (view l -> x) = maybe (invalid x) pure (preview p x)
 
     missing = throwM (FieldMissing k (Map.keys m))
     invalid = throwM . FieldInvalid k . toText
@@ -118,6 +137,3 @@ text = prism' toText go
   where
     go x | Text.null x = Nothing
          | otherwise   = either (const Nothing) Just (fromText x)
-
-bytes :: ToByteString a => (ByteString -> a) -> Prism' ByteString a
-bytes w = prism' toBS (Just . w)
