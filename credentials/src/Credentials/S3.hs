@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -12,11 +13,11 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.S3 where
-    -- ( S3
-    -- , BucketStore
-    -- , BucketName
-    -- ) where
+module Credentials.S3
+    ( S3
+    , Ref (S3Bucket)
+    , defaultPrefix
+    ) where
 
 import           Control.Exception.Lens
 import           Control.Lens                    hiding (Context)
@@ -26,8 +27,10 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.AWS         (AWSConstraint)
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.Resource
 import           Credentials
 import           Data.Bifunctor
+import           Data.ByteString                 (ByteString)
 import           Data.Conduit                    hiding (await)
 import qualified Data.Conduit.List               as CL
 import           Data.List.NonEmpty              (NonEmpty (..))
@@ -40,8 +43,10 @@ import qualified Data.Text                       as Text
 import           GHC.Exts
 import           Network.AWS
 import           Network.AWS.Data
+import           Network.AWS.Data.Body
 import           Network.AWS.S3
 import           Network.AWS.S3.Encryption
+import           Network.AWS.S3.Encryption.Body
 import           Network.AWS.S3.Encryption.Types
 
 -- FIXME: store similar envelope on dynamodb credentials, namely, add context/description
@@ -49,29 +54,35 @@ import           Network.AWS.S3.Encryption.Types
 newtype S3 a = S3 { runS3 :: AWS a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
 
-instance MonadAWS S3 where
-    liftAWS = S3
+instance MonadAWS S3 where liftAWS = S3
 
 -- FIXME: Revist context/materials for s3-encryption.
 instance Storage S3 where
     type Layer S3 = AWS
-    data Ref   S3 = S3Bucket BucketName (Maybe Text)
+    type In    S3 = RqBody -- S3Secret !Integer (Source (ResourceT IO) ByteString)
+    type Out   S3 = RsBody
+
+    data Ref S3 = S3Bucket BucketName (Maybe Text)
         deriving (Eq, Ord, Show)
 
-    layer   = runS3
-    setup   = setup'
-    cleanup = cleanup'
-    listAll = listAll'
-    insert  = insert'
-    select  = select'
+    layer     = runS3
+    setup     = setup'
+    cleanup   = cleanup'
+    revisions = revisions'
+    insert    = insert'
+    select    = select'
 --     delete n v r = safe r (delete' n v r)
+
+-- instance ToBody (Val S3) where
+--     toBody (S3Secret n s) = toBody $
+--         ChunkedBody defaultChunkSize n (s =$= enforceChunks sz)
+--       where
+--         sz = fromIntegral n
 
 defaultPrefix :: Maybe Text
 defaultPrefix = Just "credential-store"
 
-type S3Bucket = Ref S3
-
-setup' :: MonadAWS m => S3Bucket -> m Setup
+setup' :: MonadAWS m => Ref S3 -> m Setup
 setup' (S3Bucket b _) = do
     r <- liftAWS (view envRegion)
     p <- exists b
@@ -91,10 +102,10 @@ setup' (S3Bucket b _) = do
 
     return $ if p then Exists else Created
 
-cleanup' :: MonadAWS m => S3Bucket -> m ()
+cleanup' :: MonadAWS m => Ref S3 -> m ()
 cleanup' ns@(S3Bucket b _) = do
     p <- exists b
-    when p $ revisions 200 ns $$ CL.mapM_ (void . send . del)
+    when p $ listAll 200 ns $$ CL.mapM_ (void . send . del)
   where
     del xs = deleteObjects b $
         delete' & dQuiet   ?~ True
@@ -102,8 +113,8 @@ cleanup' ns@(S3Bucket b _) = do
 
     key (k, v) = objectIdentifier k & oiVersionId ?~ v
 
-listAll' :: MonadAWS m => S3Bucket -> Source m (Name, NonEmpty Revision)
-listAll' ns = revisions 200 ns
+revisions' :: MonadAWS m => Ref S3 -> Source m (Name, NonEmpty Revision)
+revisions' ns = listAll 200 ns
     =$= CL.concat
     =$= CL.groupOn1 fst
     =$= CL.map group
@@ -117,40 +128,35 @@ insert' :: MonadAWS m
         => KeyId
         -> Context
         -> Name
-        -> Value
-        -> S3Bucket
+        -> In  S3
+        -> Ref S3
         -> m Revision
-insert' k c n (Value s) (S3Bucket b p) = do
-    rs <- withKey k c . encrypt $ putObject b (nameToKey n p) (toBody s)
+insert' k c n x (S3Bucket b p) = do
+    rs <- withKey k c . encrypt $ putObject b (nameToKey n p) (toBody x)
     maybeRevision n (rs ^. porsVersionId)
 
 select' :: (MonadAWS m)
         => Context
         -> Name
         -> Maybe Revision
-        -> S3Bucket
-        -> m (Value, Revision)
+        -> Ref S3
+        -> m (Out S3, Revision)
 select' c n mr (S3Bucket b p) =
     withoutKey c (decrypt (getObject b (nameToKey n p) & revision mr))
         >>= result
   where
     result rs = do
-        r  <- maybeRevision n (rs ^. gorsVersionId)
-        bs <- mconcat <$> liftAWS (sinkBody (rs ^. gorsBody) CL.consume)
-        return (Value bs, r)
+        r <- maybeRevision n (rs ^. gorsVersionId)
+        return (rs ^. gorsBody, r)
 
     revision Nothing  = id
     revision (Just r) = goVersionId ?~ ObjectVersionId (toText r)
 
--- ovKey
--- ovVersionId
--- ovIsLatest
-
-revisions :: MonadAWS m
-          => Int
-          -> S3Bucket
-          -> Source m [(ObjectKey, ObjectVersionId)]
-revisions n (S3Bucket b k) = paginate rq
+listAll :: MonadAWS m
+        => Int
+        -> Ref S3
+        -> Source m [(ObjectKey, ObjectVersionId)]
+listAll n (S3Bucket b k) = paginate rq
     =$= CL.map (mapMaybe mk . view lovrsVersions)
     =$= CL.filter (not . null)
   where
@@ -162,8 +168,12 @@ revisions n (S3Bucket b k) = paginate rq
 
     strip = over (keyPrefix '/') (const mempty)
 
-maybeRevision n Nothing  = throwM (SecretMissing n Nothing "Unable to insert new revision.")
-maybeRevision _ (Just v) = return $! Revision (toBS v)
+maybeRevision n =
+    may (SecretMissing n Nothing "Unable to insert new revision.")
+        . fmap (Revision . toBS)
+
+may e Nothing  = throwM e
+may _ (Just v) = return v
 
 exists :: MonadAWS m => BucketName -> m Bool
 exists b =

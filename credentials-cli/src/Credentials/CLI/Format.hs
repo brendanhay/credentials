@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TupleSections        #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -16,16 +17,19 @@
 --
 module Credentials.CLI.Format where
 
+import           Control.Monad.Trans.Resource
 import           Credentials
 import           Credentials.CLI.Types
-import           Data.Aeson               (ToJSON (..), object, (.=))
+import           Data.Aeson                   (ToJSON (..), object, (.=))
 import           Data.Bifunctor
-import           Data.List                (foldl', intersperse)
-import           Data.List.NonEmpty       (NonEmpty (..))
+import           Data.ByteString              (ByteString)
+import           Data.Conduit
+import           Data.List                    (foldl', intersperse)
+import           Data.List.NonEmpty           (NonEmpty (..))
 import           Data.Monoid
-import qualified Data.Text                as Text
+import qualified Data.Text                    as Text
 import           Network.AWS.Data
-import           Options.Applicative.Help hiding (string)
+import           Options.Applicative.Help     hiding (string)
 
 data Status
     = Deleted
@@ -39,19 +43,19 @@ instance ToText Status where
         Deleted   -> "deleted"
         Truncated -> "truncated"
 
-data Emit = Emit { store' :: Store, result :: Result }
+data Emit m = Emit { store' :: Ref m, result :: Result }
 
-instance ToJSON Emit where
+instance ToText (Ref m) => ToJSON (Emit m) where
     toJSON (Emit s r) = object [toText s .= r]
 
-instance Pretty Emit where
-    pretty (Emit s r) = pretty s <> char ':' .$. indent 2 (pretty r)
+instance ToText (Ref m) => Pretty (Emit m) where
+    pretty (Emit s r) = doc s <> char ':' .$. indent 2 (pretty r)
 
 data Result
     = SetupR    Setup
     | CleanupR
     | PutR      Name Revision
-    | GetR      Name Value Revision
+    | GetR      Name (ResumableSource (ResourceT IO) ByteString) Revision
     | DeleteR   Name Revision
     | TruncateR Name
     | ListR     [(Name, NonEmpty Revision)]
@@ -61,7 +65,7 @@ instance ToLog Result where
         SetupR        s -> build s
         CleanupR        -> build Deleted
         PutR      _ r   -> build r
-        GetR      _ v _ -> build (toBS v)
+--        GetR      _ v _ -> build (toBS v)
         DeleteR   {}    -> build Deleted
         TruncateR {}    -> build Truncated
         ListR        rs -> foldMap f rs
@@ -74,7 +78,7 @@ instance ToJSON Result where
         SetupR        s -> object ["status" =~ s]
         CleanupR        -> object ["status" =~ Deleted]
         PutR      n   r -> object ["name"   =~ n, "revision" =~ r]
-        GetR      n v r -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
+--        GetR      n v r -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
         DeleteR   n   r -> object ["name"   =~ n, "revision" =~ r, "status" =~ Deleted]
         TruncateR n     -> object ["name"   =~ n, "status"   =~ Truncated]
         ListR        rs -> object (map go rs)
@@ -88,18 +92,18 @@ instance Pretty Result where
         SetupR        s -> stat s
         CleanupR        -> stat Deleted
         PutR      n   r -> name n .$. rev r
-        GetR      n v r -> name n .$. rev r .$. val v
+--        GetR      n v r -> name n .$. rev r .$. val v
         DeleteR   n r   -> name n .$. rev r .$. stat Deleted
         TruncateR n     -> name n .$. stat Truncated
-        ListR        rs -> go rs
+        ListR        rs -> list rs
       where
         name n = "name:"     <+> doc n
         rev  r = "revision:" <+> doc r
         stat s = "status:"   <+> doc s
         val  v = "secret:"   <+> doc (toBS v)
 
-        go []     = mempty
-        go (r:rs) = foldl' (.$.) (f r) (map f rs)
+        list []     = mempty
+        list (r:rs) = foldl' (.$.) (f r) (map f rs)
           where
             f (n, v :| vs) = doc n <> ":" .$.
                 indent 2 (extractChunk (revs v vs))
@@ -113,8 +117,7 @@ instance Pretty Result where
             n  = maximum (map (Text.length . fst) ys) + 2
             ys = map (first toText) xs
 
-        doc :: ToText a => a -> Doc
-        doc = text . string
-
         item x = "-" <+> doc x
 
+doc :: ToText a => a -> Doc
+doc = text . string

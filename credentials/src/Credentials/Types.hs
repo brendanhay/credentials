@@ -47,28 +47,12 @@ newtype Name = Name Text
 newtype Revision = Revision ByteString
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
--- | An unencrypted secret value.
-newtype Value = Value ByteString
-    deriving (Eq, Ord, FromText, ToText, ToByteString)
-
-instance Show Value where
-    show = const "Value *****"
-
--- | An encryption context.
+-- | A KMS encryption context.
 newtype Context = Context { fromContext :: HashMap Text Text }
     deriving (Eq, Show, Monoid)
 
 blankContext :: Context -> Bool
 blankContext = Map.null . fromContext
-
--- | Wrapped key.
-newtype Key = Key ByteString deriving (ToByteString)
-
--- | Encrypted ciphertext.
-newtype Cipher = Cipher ByteString deriving (ToByteString)
-
--- | An encrypted secret.
-data Secret = Secret Key Cipher HMAC256
 
 -- | HMAC SHA256, possibly hex-encoded.
 data HMAC256
@@ -86,6 +70,15 @@ instance ToByteString HMAC256 where
 instance Show HMAC256 where
     show = BS8.unpack . toBS
 
+-- | Wrapped key.
+newtype Key = Key ByteString deriving (ToByteString)
+
+-- | Encrypted ciphertext.
+newtype Cipher = Cipher ByteString deriving (ToByteString)
+
+-- | An encrypted secret.
+data Encrypted = Encrypted Key Cipher HMAC256
+
 data Setup
     = Created
     | Exists
@@ -99,19 +92,25 @@ instance ToText Setup where
 instance ToLog Setup where
     build = build . toText
 
-class Storage m where
+class Monad m => Storage m where
+    -- | The underlying storage layer.
     type Layer m :: * -> *
-    data Ref   m :: *
 
-    layer   :: m a -> Layer m a
+    -- | A reference to the storage engine, such as a table or bucket name.
+    data Ref m :: *
 
-    setup   :: Ref m -> m Setup
-    cleanup :: Ref m -> m ()
-    listAll :: Ref m -> Source m (Name, NonEmpty Revision)
-    delete  :: Name -> Maybe Revision -> Ref m -> m ()
+    type In  m :: *
+    type Out m :: *
 
-    insert  :: KeyId -> Context -> Name -> Value          -> Ref m -> m Revision
-    select  ::          Context -> Name -> Maybe Revision -> Ref m -> m (Value, Revision)
+    layer     :: m a -> Layer m a
+
+    setup     :: Ref m -> m Setup
+    cleanup   :: Ref m -> m ()
+    revisions :: Ref m -> Source m (Name, NonEmpty Revision)
+
+    delete :: Name  -> Maybe Revision                    -> Ref m -> m ()
+    insert :: KeyId -> Context -> Name -> In m           -> Ref m -> m Revision
+    select ::          Context -> Name -> Maybe Revision -> Ref m -> m (Out m, Revision)
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
@@ -128,6 +127,10 @@ data CredentialError
 
     | StorageMissing Text
       -- ^ Storage doesn't exist, or has gone on holiday.
+
+    | StorageFailure Text
+      -- ^ Some storage pre-condition wasn't met.
+      -- For example: DynamoDB column size exceeded.
 
     | FieldMissing Text [Text]
       -- ^ Missing field from the storage engine.

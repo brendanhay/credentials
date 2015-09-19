@@ -5,8 +5,6 @@ extra-deps:
 packages:
   - credentials
   - credentials-cli
-  - credentials-dynamodb
-  - credentials-s3
   - ../amazonka/amazonka
   - ../amazonka/core
   - ../amazonka/amazonka-dynamodb

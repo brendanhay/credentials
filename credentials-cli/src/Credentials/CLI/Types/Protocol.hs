@@ -49,13 +49,13 @@ class FromURI a where
     fromURI :: URI -> Either String a
 
 -- dynamo:/table-name
-instance FromURI DynamoTable where
+instance FromURI (Ref DynamoDB) where
     fromURI u = do
         scheme "dynamo" u
         ensure "Table name cannot be empty." (path u)
 
 -- s3:/bucket[/prefix]
-instance FromURI S3Bucket where
+instance FromURI (Ref S3) where
     fromURI u = do
         scheme "s3" u
         S3Bucket <$> ensure "Bucket name cannot be empty." b <*> pure (prefix p)

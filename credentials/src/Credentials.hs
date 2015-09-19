@@ -23,11 +23,11 @@ module Credentials
     , module Credentials.Types
     ) where
 
-import           Control.Monad.Catch
-import           Credentials.Secret
+-- import           Control.Monad.Catch
+-- import           Credentials.Encryption
 import           Credentials.Types
-import           Data.Typeable
-import           Network.AWS
+-- import           Data.Typeable
+-- import           Network.AWS
 
 -- put :: (MonadThrow m, MonadAWS m, Storage m, Typeable m)
 --     => KeyId
