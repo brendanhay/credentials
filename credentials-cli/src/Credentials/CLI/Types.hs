@@ -33,7 +33,7 @@ import           Data.ByteString                 (ByteString)
 import           Data.ByteString.Builder         (Builder)
 import qualified Data.ByteString.Lazy            as LBS
 import           Data.Conduit
-import           Data.Conduit
+import qualified Data.Conduit.Binary             as CB
 import           Data.Conduit.Lazy
 import qualified Data.Conduit.List               as CL
 import           Data.Data
@@ -56,8 +56,8 @@ data Force
     | Prompt
 
 data Input
-    = Value  ByteString
-    | Stream !Integer (Source (ResourceT IO) ByteString)
+    = Value ByteString
+    | Path  FilePath
 
 data Mode
     = Setup
@@ -107,43 +107,21 @@ newtype App a = App { unApp :: ReaderT Options AWS a }
         , MonadReader Options
         )
 
-runApp :: Env -> Options -> App a -> IO a
-runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
-
--- newtype AppT a = AppT { unAppT :: (Storage m, Layer m ~ AWS) => App m a }
-
--- runAppT e c = runApp e c . unAppT
-
--- runLazy :: Source App a -> App [a]
--- runLazy = App . lazyConsume . hoist unApp
-
 instance MonadAWS App where
     liftAWS = App . lift
 
--- instance Storage m => Storage (App m) where
---     type  Layer (App m) = ReaderT Options m
+runApp :: Env -> Options -> App a -> IO a
+runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
 
---     newtype Ref (App m) = Ref { ref :: Ref m }
-
---     type    In  (App m) = In  m
---     type    Out (App m) = Out m
-
---     layer = unApp
-
---     setup     = lift . setup           . ref
---     cleanup   = lift . cleanup         . ref
---     revisions = hoist lift . revisions . ref
-
---     delete     n mr = lift . delete n mr    . ref
---     insert k c n i  = lift . insert k c n i . ref
---     select   c n mr = lift . select c n mr  . ref
+runLazy :: Source App a -> App [a]
+runLazy = App . lazyConsume . hoist unApp
 
 instance Storage App where
     type Layer App = ReaderT Options AWS
 
     data Ref App
-        = Table  (Ref DynamoDB)
-        | Bucket (Ref S3)
+        = Table  URI (Ref DynamoDB)
+        | Bucket URI (Ref S3)
 
     type In  App = Input
     type Out App = ResumableSource (ResourceT IO) ByteString
@@ -151,43 +129,49 @@ instance Storage App where
     layer = unApp
 
     setup = \case
-        Table  s -> embed (setup s)
-        Bucket s -> embed (setup s)
+        Table  _ s -> embed (setup s)
+        Bucket _ s -> embed (setup s)
 
     cleanup = \case
-        Table  s -> embed (cleanup s)
-        Bucket s -> embed (cleanup s)
+        Table  _ s -> embed (cleanup s)
+        Bucket _ s -> embed (cleanup s)
 
     revisions = \case
-        Table  s -> hoist embed (revisions s)
-        Bucket s -> hoist embed (revisions s)
+        Table  _ s -> hoist embed (revisions s)
+        Bucket _ s -> hoist embed (revisions s)
 
     delete n mr = \case
-        Table  s -> embed (delete n mr s)
-        Bucket s -> embed (delete n mr s)
+        Table  _ s -> embed (delete n mr s)
+        Bucket _ s -> embed (delete n mr s)
 
     insert k c n i = \case
-        Table  s -> embed $ do
+        Table  _ s -> embed $
             case i of
-                Value     v -> insert k c n v s
-                Stream sz v
-                    | sz > 190 * 1024 -> throwM (StorageFailure "Some size error goes here.")
-                    | otherwise       -> do
-                        cs <- liftIO . runResourceT $ v $$ CL.consume
-                        let x = LBS.toStrict (LBS.fromChunks cs)
-                        insert k c n x s
+                Value v -> insert k c n v s
+                Path  f -> do
+                    sz <- getFileSize f
+                    if sz > 190 * 1024
+                        then throwM (StorageFailure "Some size error goes here.")
+                        else do
+                            cs <- liftIO . runResourceT $
+                                CB.sourceFile f $$ CL.consume
+                            let x = LBS.toStrict (LBS.fromChunks cs)
+                            insert k c n x s
 
-        Bucket s -> embed . flip (insert k c n) s $
+        Bucket _ s -> embed $
             case i of
-                Value     v -> toBody v
-                Stream sz v -> toBody (enforceChunks sz v)
+                Value v -> insert k c n (toBody v) s
+                Path  f -> do
+                    sz <- getFileSize f
+                    let v = toBody (enforceChunks sz (CB.sourceFile f))
+                    insert k c n v s
 
     select c n mr = \case
-        Table  s -> do
+        Table  _ s -> do
             (x, r) <- embed (select c n mr s)
             return (newResumableSource (CL.sourceList [x]), r)
 
-        Bucket s -> do
+        Bucket _ s -> do
             (x, r) <- embed (select c n mr s)
             return (_streamBody x, r)
 
@@ -200,20 +184,22 @@ instance FromText Store where
     parser = uriParser
 
 instance FromURI Store where
-    fromURI u = Table <$> fromURI u <|> Bucket <$> fromURI u
+    fromURI u = Table u <$> fromURI u <|> Bucket u <$> fromURI u
 
 instance ToText Store where
-    toText = const "" --toText . serializeURI' . \case
-        -- Table  u _ -> u
-        -- Bucket u _ -> u
+    toText = toText . serializeURI' . \case
+        Table  u _ -> u
+        Bucket u _ -> u
 
-defaultStore = undefined
+instance Show   Store where show   = Text.unpack . toText
+instance Pretty Store where pretty = text . show
+instance ToLog  Store where build  = build . toText
 
---defaultStore :: Store
--- defaultStore = Bucket u (S3Bucket "sekkinen" defaultPrefix)
---   where
---     u = URI d Nothing ("/sekkinen/credential-store") mempty Nothing
---     d = Scheme "s3"
+defaultStore :: Store
+defaultStore = Bucket u (S3Bucket "sekkinen" defaultPrefix)
+  where
+    u = URI d Nothing ("/sekkinen/credential-store") mempty Nothing
+    d = Scheme "s3"
 
 -- defaultStore :: Store
 -- defaultStore = Table u defaultTable
@@ -222,30 +208,15 @@ defaultStore = undefined
 --     d = Scheme "dynamo"
 --     a = Authority Nothing (Host "localhost") (Just (Port 8000))
 
--- setStore :: HasEnv a => Options -> a -> a
--- setStore c = configure f
---   where
---     f = case store c of
---         Table  u _ -> g u dynamoDB
---         Bucket u _ -> g u s3
+setStore :: HasEnv a => Options -> a -> a
+setStore c = configure f
+  where
+    f = case store c of
+        Table  u _ -> g u dynamoDB
+        Bucket u _ -> g u s3
 
---     g u | Just h <- host u = setEndpoint (secure u) h (port u)
---         | otherwise        = id
-
--- instance FromText Store where
---     parser = uriParser
-
--- instance FromURI Store where
---     fromURI u = Table u <$> fromURI u <|> Bucket u <$> fromURI u
-
--- instance ToText Store where
---     toText = toText . serializeURI' . \case
---         Table  u _ -> u
---         Bucket u _ -> u
-
--- instance Show   Store where show   = Text.unpack . toText
--- instance Pretty Store where pretty = text . show
--- instance ToLog  Store where build  = build . toText
+    g u | Just h <- host u = setEndpoint (secure u) h (port u)
+        | otherwise        = id
 
 data Pair = Pair Text Text
 

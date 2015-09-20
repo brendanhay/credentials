@@ -43,12 +43,12 @@ instance ToText Status where
         Deleted   -> "deleted"
         Truncated -> "truncated"
 
-data Emit m = Emit { store' :: Ref m, result :: Result }
+data Emit = Emit { store' :: Store, result :: Result }
 
-instance ToText (Ref m) => ToJSON (Emit m) where
+instance ToJSON Emit where
     toJSON (Emit s r) = object [toText s .= r]
 
-instance ToText (Ref m) => Pretty (Emit m) where
+instance Pretty Emit where
     pretty (Emit s r) = doc s <> char ':' .$. indent 2 (pretty r)
 
 data Result
@@ -65,7 +65,7 @@ instance ToLog Result where
         SetupR        s -> build s
         CleanupR        -> build Deleted
         PutR      _ r   -> build r
---        GetR      _ v _ -> build (toBS v)
+        GetR      _ v _ -> build (toBS v)
         DeleteR   {}    -> build Deleted
         TruncateR {}    -> build Truncated
         ListR        rs -> foldMap f rs
