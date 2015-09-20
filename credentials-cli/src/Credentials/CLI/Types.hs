@@ -20,6 +20,7 @@
 --
 module Credentials.CLI.Types where
 
+import           Control.Monad.Base
 import           Control.Monad.Catch
 import           Control.Monad.Morph             (hoist)
 import           Control.Monad.Reader
@@ -104,11 +105,13 @@ newtype App a = App { unApp :: ReaderT Options AWS a }
         , MonadIO
         , MonadThrow
         , MonadCatch
+        , MonadMask
         , MonadReader Options
+        , MonadBase IO
         )
 
-instance MonadAWS App where
-    liftAWS = App . lift
+instance MonadAWS      App where liftAWS       = App . lift
+instance MonadResource App where liftResourceT = App . liftResourceT
 
 runApp :: Env -> Options -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
@@ -124,7 +127,7 @@ instance Storage App where
         | Bucket URI (Ref S3)
 
     type In  App = Input
-    type Out App = ResumableSource (ResourceT IO) ByteString
+    type Out App = ResumableSource App ByteString
 
     layer = unApp
 
@@ -173,7 +176,7 @@ instance Storage App where
 
         Bucket _ s -> do
             (x, r) <- embed (select c n mr s)
-            return (_streamBody x, r)
+            return (hoist liftResourceT (_streamBody x), r)
 
 embed :: (Storage m, Layer m ~ AWS) => m a -> App a
 embed = App . lift . layer

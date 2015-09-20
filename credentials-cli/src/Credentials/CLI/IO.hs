@@ -66,12 +66,6 @@ emit r = do
             Print  -> stringUtf8
                 (displayS (renderPretty 0.4 80 (pretty e)) "") <> "\n"
 
--- load :: Input -> App Value
--- load (Raw  v) = return v
--- load (Path p) = do
---     says ("Reading secret from " % p % "...")
---     Value <$> liftIO (BS.readFile p)
-
 prompt :: Force -> App () -> App ()
 prompt NoPrompt io = says "Running ..." >> io
 prompt Prompt   io = do

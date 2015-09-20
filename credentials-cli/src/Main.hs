@@ -23,12 +23,14 @@ import           Control.Lens                    ((.~), (<&>))
 import           Control.Monad.Catch
 import           Control.Monad.Morph             (hoist)
 import           Control.Monad.Reader
+import           Control.Monad.Trans.Resource
 import           Credentials                     hiding (context)
 import           Credentials.CLI.Format
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
 import           Credentials.CLI.Types
 import           Data.ByteString.Builder         (Builder)
+import qualified Data.ByteString.Lazy            as LBS
 import           Data.Conduit
 import           Data.Conduit.Lazy
 import qualified Data.Conduit.List               as CL
@@ -58,7 +60,7 @@ main :: IO ()
 main = do
     (c, m) <- customExecParser (prefs showHelpOnError) options
     l      <- newLogger (level c) stderr
-    e      <- newEnv (region c) Discover <&> (envLogger .~ l)-- . setStore c
+    e      <- newEnv (region c) Discover <&> (envLogger .~ l) . setStore c
     catches (runApp e c (program c m))
         [ handler _CredentialError $ \x -> quit 1 (show x)
         ]
@@ -88,13 +90,16 @@ program Options{region = r, store = s} = \case
         insert k c n x s >>= emit . PutR n
         says "Done."
 
-    Get c n v -> do
+    Get c n mr -> do
         say "Retrieving"
-        case v of
+        case mr of
             Nothing -> pure ()
-            Just x  -> say (" revision " % x % " of")
+            Just r' -> say (" revision " % r' % " of")
         says (" " % n % " from " % s % " in " % r % "...")
-        select c n v s >>= emit . uncurry (GetR n)
+        (rs,  v) <- select c n mr s
+        (src, f) <- unwrapResumable rs
+        x        <- runLazy src
+        emit (GetR n v (LBS.fromChunks x)) `finally` f
         says "Done."
 
     Delete n v f -> do
@@ -201,7 +206,7 @@ common = Options
              "The following formats are supported:"
                  [ (Pretty, "Pretty printed JSON.")
                  , (JSON,   "Single-line JSON output.")
-                 , (Echo,   "Single-line textual output.")
+                 , (Echo,   "Untitled textual output with no trailing newline.")
                  , (Print,  "Print multi-line user output.")
                  ]
              Print Nothing
