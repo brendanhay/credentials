@@ -1,7 +1,9 @@
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -59,7 +61,7 @@ instance MonadAWS S3 where liftAWS = S3
 -- FIXME: Revist context/materials for s3-encryption.
 instance Storage S3 where
     type Layer S3 = AWS
-    type In    S3 = RqBody -- S3Secret !Integer (Source (ResourceT IO) ByteString)
+    type In    S3 = RqBody
     type Out   S3 = RsBody
 
     data Ref S3 = S3Bucket BucketName (Maybe Text)
@@ -71,13 +73,7 @@ instance Storage S3 where
     revisions = revisions'
     insert    = insert'
     select    = select'
---     delete n v r = safe r (delete' n v r)
-
--- instance ToBody (Val S3) where
---     toBody (S3Secret n s) = toBody $
---         ChunkedBody defaultChunkSize n (s =$= enforceChunks sz)
---       where
---         sz = fromIntegral n
+    delete    = delete_
 
 defaultPrefix :: Maybe Text
 defaultPrefix = Just "credential-store"
@@ -105,24 +101,24 @@ setup' (S3Bucket b _) = do
 cleanup' :: MonadAWS m => Ref S3 -> m ()
 cleanup' ns@(S3Bucket b _) = do
     p <- exists b
-    when p $ listAll 200 ns $$ CL.mapM_ (void . send . del)
-  where
-    del xs = deleteObjects b $
-        delete' & dQuiet   ?~ True
-                & dObjects .~ map key xs
-
-    key (k, v) = objectIdentifier k & oiVersionId ?~ v
+    when p (listAll 200 ns $$ deleteAll b (const True))
 
 revisions' :: MonadAWS m => Ref S3 -> Source m (Name, NonEmpty Revision)
 revisions' ns = listAll 200 ns
     =$= CL.concat
-    =$= CL.groupOn1 fst
+    =$= CL.map (_1 %~ strip)
+    =$= CL.groupOn1 (view _1)
     =$= CL.map group
   where
-    group ((n, r), rs) = (name n, rev r :| map (rev . snd) rs)
+    group ((n, r, _), rs) = (name n, rev r :| map (rev . view _2) rs)
 
-    name = Name     . toText
-    rev  = Revision . toBS
+    strip = over (keyPrefix '/') (const mempty)
+
+    name :: ObjectKey -> Name
+    name = Name . toText
+
+    rev :: ObjectVersionId -> Revision
+    rev = Revision . toBS
 
 insert' :: MonadAWS m
         => KeyId
@@ -152,21 +148,48 @@ select' c n mr (S3Bucket b p) =
     revision Nothing  = id
     revision (Just r) = goVersionId ?~ ObjectVersionId (toText r)
 
+delete_ :: MonadAWS m
+        => Name
+        -> Maybe Revision
+        -> Ref S3
+        -> m ()
+delete_ n r (S3Bucket b p) = case r of
+    Just x  -> void . send $
+        deleteObject b (nameToKey n p)
+            & doVersionId ?~ ObjectVersionId (toText x)
+    Nothing ->
+        listAll 200 (S3Bucket b (Just (toText (nameToKey n p))))
+           $$ deleteAll b not
+
+deleteAll :: MonadAWS m
+          => BucketName
+          -> (a -> Bool)
+          -> Consumer [(ObjectKey, ObjectVersionId, a)] m ()
+deleteAll b f = CL.mapM_ (del . mapMaybe key)
+  where
+    del [] = return ()
+    del xs = void . send . deleteObjects b $
+        delete' & dQuiet   ?~ True
+                & dObjects .~ xs
+
+    key (k, v, x)
+        | f x       = Just (objectIdentifier k & oiVersionId ?~ v)
+        | otherwise = Nothing
+
 listAll :: MonadAWS m
         => Int
         -> Ref S3
-        -> Source m [(ObjectKey, ObjectVersionId)]
+        -> Source m [(ObjectKey, ObjectVersionId, Bool)]
 listAll n (S3Bucket b k) = paginate rq
     =$= CL.map (mapMaybe mk . view lovrsVersions)
     =$= CL.filter (not . null)
   where
     rq = listObjectVersions b & lovPrefix .~ k & lovMaxKeys ?~ n
 
-    mk x = fmap (first strip) . (,)
-        <$> x ^. ovKey
-        <*> x ^. ovVersionId
-
-    strip = over (keyPrefix '/') (const mempty)
+    mk x = (,,)
+     <$> x ^. ovKey
+     <*> x ^. ovVersionId
+     <*> pure (fromMaybe False (x ^. ovIsLatest))
 
 maybeRevision n =
     may (SecretMissing n Nothing "Unable to insert new revision.")

@@ -174,30 +174,28 @@ delete' :: MonadAWS m
         -> Maybe Revision
         -> Ref DynamoDB
         -> m ()
-delete' n r t =
-    case r of
-        Just x  -> do
-            (v, _) <- select' n (Just x) t
-            void . send $
-                deleteItem (toText t) & diKey .~ encode n <> encode v
+delete' n r t = case r of
+    Just x  -> do
+        (v, _) <- select' n (Just x) t
+        void . send $
+            deleteItem (toText t) & diKey .~ encode n <> encode v
+    Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
+  where
+    qry = mkNamed n t
+        & qAttributesToGet  ?~ nameField :| [versionField]
+        & qScanIndexForward ?~ True
+        & qLimit            ?~ 25
 
-        Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
+    del []     = return ()
+    del (x:ys) = void . send $ batchWriteItem
+        & bwiRequestItems .~ [(toText t, f x :| map f xs)]
+      where
+        f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
+
+        xs | i < 24    = take (i - 1) ys
+           | otherwise = ys
           where
-            qry = mkNamed n t
-                & qAttributesToGet  ?~ nameField :| [versionField]
-                & qScanIndexForward ?~ True
-                & qLimit            ?~ 25
-
-            del []     = return ()
-            del (x:ys) = void . send $ batchWriteItem
-                & bwiRequestItems .~ [(toText t, f x :| map f xs)]
-              where
-                f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
-
-                xs | i < 24    = take (i - 1) ys
-                   | otherwise = ys
-                  where
-                    i = length ys
+            i = length ys
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
