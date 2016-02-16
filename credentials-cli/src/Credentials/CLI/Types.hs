@@ -57,8 +57,8 @@ data Force
     | Prompt
 
 data Input
-    = Value ByteString
-    | Path  FilePath
+    = Value !ByteString
+    | Path  !FilePath
 
 data Mode
     = Setup

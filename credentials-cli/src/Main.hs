@@ -165,7 +165,7 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             "Truncate a specific credential's revisions."
             "Bar"
         ]
-
+        --
 mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
 mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
@@ -195,7 +195,7 @@ common = Options
                  ]
              defaultStore
              (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \
-                   \the AWS endpoints will be used if appropriate.")
+                   \the default AWS endpoints will be used.")
          )
 
     <*> textOption
