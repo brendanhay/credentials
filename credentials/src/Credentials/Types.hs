@@ -48,7 +48,7 @@ newtype KeyId = KeyId Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 defaultKeyId :: KeyId
-defaultKeyId = KeyId "alias/credential-store"
+defaultKeyId = KeyId "alias/credentials"
 
 -- | A shared/readable name for a secret.
 newtype Name = Name Text

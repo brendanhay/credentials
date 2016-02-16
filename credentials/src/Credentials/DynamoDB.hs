@@ -97,7 +97,7 @@ instance Storage DynamoDB where
         (,y) <$> decrypt c n x
 
 defaultTable :: Ref DynamoDB
-defaultTable = DynamoTable "credential-store"
+defaultTable = DynamoTable "credentials"
 
 -- FIXME:
 -- This is a bit over specified due to the coarseness of _ResourceNotFound.
