@@ -116,7 +116,7 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
     desc = bold "credentials"
         <+> "- Administration tool for managing secure, shared credentials."
 
-    modes = subparser $ mconcat
+    modes = hsubparser $ mconcat
         [ mode "setup"
             (pure Setup)
             "Setup a new credential store."
