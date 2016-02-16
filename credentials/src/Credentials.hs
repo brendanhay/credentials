@@ -13,40 +13,16 @@
 --
 module Credentials
     -- * Storage Interface
-    ( Storage (..)
+    ( Storage  (..)
 
-    -- -- * Encryption and Decryption
-    -- , put
-    -- , get
+    -- ** DynamoDB
+    , DynamoDB
+    , Ref (DynamoTable)
+    , defaultTable
 
     -- * Re-exported Types
     , module Credentials.Types
     ) where
 
--- import           Control.Monad.Catch
--- import           Credentials.Encryption
+import           Credentials.DynamoDB
 import           Credentials.Types
--- import           Data.Typeable
--- import           Network.AWS
-
--- put :: (MonadThrow m, MonadAWS m, Storage m, Typeable m)
---     => KeyId
---     -> Context
---     -> Name
---     -> Value
---     -> Ref m
---     -> m Revision
--- put k c n x r = do
---     s <- encrypt k c n x
---     insert n s r
-
--- get :: (MonadThrow m, MonadAWS m, Storage m)
---     => Context
---     -> Name
---     -> Maybe Revision
---     -> Ref m
---     -> m (Value, Revision)
--- get c n mv r = do
---     (s, v) <- select  n mv r
---     x      <- decrypt c n s
---     return (x, v)

@@ -11,11 +11,14 @@
 module Credentials.CLI.Options where
 
 import           Credentials.CLI.Types
+
 import           Data.Bifunctor
 import           Data.List                (foldl')
 import qualified Data.Text                as Text
+
 import           Network.AWS.Data
 import           Network.AWS.Data.Text
+
 import           Options.Applicative      hiding (optional)
 import qualified Options.Applicative      as Opt
 import           Options.Applicative.Help hiding (string)

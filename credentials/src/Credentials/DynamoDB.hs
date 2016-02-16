@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
@@ -28,10 +29,14 @@ import           Control.Monad
 import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Retry
-import           Credentials
+
 import           Credentials.DynamoDB.Item
 import           Credentials.KMS           as KMS
+import           Credentials.Types
+
 import           Crypto.Hash
+import           Crypto.Random             (MonadRandom (..))
+
 import           Data.ByteArray.Encoding
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as BS
@@ -42,18 +47,32 @@ import qualified Data.HashMap.Strict       as Map
 import           Data.List.NonEmpty        (NonEmpty (..))
 import qualified Data.List.NonEmpty        as NE
 import           Data.Maybe
+import           Data.Monoid               ((<>))
 import           Data.Ord
 import           Data.Text                 (Text)
 import           Data.Time.Clock.POSIX
 import           Data.Typeable
+
 import           Network.AWS
 import           Network.AWS.Data
 import           Network.AWS.DynamoDB
 
 newtype DynamoDB a = DynamoDB { runDynamo :: AWS a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
+    deriving
+        ( Functor
+        , Applicative
+        , Monad
+        , MonadIO
+        , MonadThrow
+        , MonadCatch
+        , MonadMask
+        )
 
-instance MonadAWS DynamoDB where liftAWS = DynamoDB
+instance MonadAWS DynamoDB where
+    liftAWS = DynamoDB
+
+instance MonadRandom DynamoDB where
+    getRandomBytes = liftIO . getRandomBytes
 
 instance Storage DynamoDB where
     type Layer DynamoDB = AWS
@@ -107,7 +126,7 @@ setup' t@(toText -> t') = do
                 ]
         void $ send (createTable t' keys iops & attr & secn)
         void $ await tableExists (describeTable t')
-    return $ if p then Exists else Created
+    pure $ if p then Exists else Created
 
 cleanup' :: MonadAWS m => Ref DynamoDB -> m ()
 cleanup' t@(toText -> t') = do
@@ -127,24 +146,24 @@ revisions' t = paginate (mkScan t)
     group ((k, r), rs) = (k, desc (r :| map snd rs))
 
     desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
-    desc = NE.map snd . NE.sortOn (Down . fst)
+    desc = NE.map snd . NE.sortWith (Down . fst)
 
-insert' :: (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
+insert' :: forall m. (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
         => Name
         -> Encrypted
         -> Ref DynamoDB
         -> m Revision
 insert' n s t = recovering policy [const cond] write
   where
-    write = do
+    write = const $ do
         v <- maybe 1 (+1) <$> latest n t
         r <- mkRevision v
         void . send $ putItem (toText t)
             & piItem     .~ encode n <> encode v <> encode r <> encode s
             & piExpected .~ Map.map (const expect) (encode v <> encode r)
-        return r
+        pure r
 
-    cond = handler_ _ConditionalCheckFailedException (return True)
+    cond = handler_ _ConditionalCheckFailedException (pure True)
 
     expect = expectedAttributeValue & eavExists ?~ False
 
@@ -186,7 +205,7 @@ delete' n r t = case r of
         & qScanIndexForward ?~ True
         & qLimit            ?~ 25
 
-    del []     = return ()
+    del []     = pure ()
     del (x:ys) = void . send $ batchWriteItem
         & bwiRequestItems .~ [(toText t, f x :| map f xs)]
       where
@@ -228,12 +247,12 @@ mkRevision v = do
     ts <- liftIO getPOSIXTime
     let d = hash (toBS (show ts) <> toBS v) :: Digest SHA1
         r = BS.take 7 (convertToBase Base16 d)
-    return $! Revision r
+    pure $! Revision r
 
 findC :: Monad m => (a -> Bool) -> Consumer a m (Maybe a)
 findC f = loop
   where
-    loop = C.await >>= maybe (return Nothing) go
+    loop = C.await >>= maybe (pure Nothing) go
 
-    go x | f x       = return (Just x)
+    go x | f x       = pure (Just x)
          | otherwise = loop

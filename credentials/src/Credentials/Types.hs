@@ -15,22 +15,33 @@
 --
 module Credentials.Types where
 
-import           Control.Exception.Lens
+import           Control.Exception.Lens  (exception)
 import           Control.Lens            hiding (Context)
-import           Control.Monad.Catch
+import           Control.Monad.Catch     (Exception, SomeException)
+
 import           Crypto.Hash             (SHA256)
 import           Crypto.MAC.HMAC         (HMAC)
-import           Data.ByteArray.Encoding
+
+import           Data.ByteArray          (Bytes)
+import           Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString.Char8   as BS8
 import           Data.Conduit            (Source)
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as Map
 import           Data.List.NonEmpty      (NonEmpty (..))
-import           Data.Typeable
-import           Network.AWS
+import           Data.Text               (Text)
+import           Data.Typeable           (Typeable)
+
 import           Network.AWS.Data
-import           Network.AWS.Data.Text
+
+authTagLength, nonceLength :: Int
+authTagLength = 16
+nonceLength   = 16
+
+-- | AES128 CTR mode block cipher initialisation vector.
+newtype Nonce = Nonce ByteString
+    deriving (ToByteString)
 
 -- | The KMS master key identifier.
 newtype KeyId = KeyId Text
@@ -56,8 +67,8 @@ blankContext = Map.null . fromContext
 
 -- | HMAC SHA256, possibly hex-encoded.
 data HMAC256
-    = Hex    ByteString
-    | Digest (HMAC SHA256)
+    = Hex    !ByteString
+    | Digest !(HMAC SHA256)
 
 instance Eq HMAC256 where
     a == b = toBS a == toBS b
@@ -77,7 +88,7 @@ newtype Key = Key ByteString deriving (ToByteString)
 newtype Cipher = Cipher ByteString deriving (ToByteString)
 
 -- | An encrypted secret.
-data Encrypted = Encrypted Key Cipher HMAC256
+data Encrypted = Encrypted !Nonce !Key !Cipher !HMAC256
 
 data Setup
     = Created

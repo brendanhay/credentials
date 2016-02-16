@@ -18,8 +18,10 @@
 module Credentials.CLI.Format where
 
 import           Control.Monad.Trans.Resource
+
 import           Credentials
 import           Credentials.CLI.Types
+
 import           Data.Aeson                   (ToJSON (..), object, (.=))
 import           Data.Bifunctor
 import           Data.ByteString              (ByteString)
@@ -29,7 +31,9 @@ import           Data.List                    (foldl', intersperse)
 import           Data.List.NonEmpty           (NonEmpty (..))
 import           Data.Monoid
 import qualified Data.Text                    as Text
+
 import           Network.AWS.Data
+
 import           Options.Applicative.Help     hiding (string)
 
 data Status

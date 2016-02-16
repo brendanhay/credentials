@@ -24,11 +24,13 @@ import           Control.Monad.Catch
 import           Control.Monad.Morph             (hoist)
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Resource
+
 import           Credentials                     hiding (context)
 import           Credentials.CLI.Format
 import           Credentials.CLI.IO
 import           Credentials.CLI.Options
 import           Credentials.CLI.Types
+
 import           Data.ByteString.Builder         (Builder)
 import qualified Data.ByteString.Lazy            as LBS
 import           Data.Conduit
@@ -36,25 +38,15 @@ import           Data.Conduit.Lazy
 import qualified Data.Conduit.List               as CL
 import           Data.List.NonEmpty              (NonEmpty)
 import           Data.Text                       (Text)
+
 import           Network.AWS
+
 import           Options.Applicative             hiding (optional)
 import           Options.Applicative.Help.Pretty
+
 import           System.IO
 
 default (Builder, Text)
-
--- Large File Storage:
---   have a pointer to something in S3, or actually store everything there?
-
--- Streaming:
---   for storage engines that support it, when specifying a filepath
---   via the CLI, how to connect a conduit, what interface?
-
--- Revision:
---   an optional comment for revisions.
-
--- Val:
---   rename to Table -> Item -> Attribute
 
 main :: IO ()
 main = do
@@ -189,9 +181,8 @@ common = Options
         <> long "uri"
         <> metavar "URI"
         <> defaults "URI specifying the storage system to use."
-             "The URI format must be one of the following protocols:"
+             "The URI format must follow the following protocol:"
                  [ ("dynamo:/[/host[:port]]/table-name", "")
-                 , ("s3:/[/host[:port]]/bucket-name[/prefix]", "")
                  ]
              defaultStore
              (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \

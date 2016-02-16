@@ -20,17 +20,22 @@
 --
 module Credentials.DynamoDB.Item where
 
-import           Control.Lens         hiding (Context)
-import           Control.Monad.Catch
-import           Credentials
+import           Control.Lens         (Prism', Traversal')
+import           Control.Lens         (iso, lens, preview, prism', review, view)
+import           Control.Lens         ((&), (.~), (?~), (^.))
+import           Control.Monad.Catch  (MonadThrow (..))
+
+import           Credentials.Types
+
 import           Data.ByteString      (ByteString)
 import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
-import           Data.Maybe
-import           Data.Monoid
-import           Data.Proxy
+import           Data.Maybe           (mapMaybe)
+import           Data.Monoid          ((<>))
+import           Data.Proxy           (Proxy (..))
 import           Data.Text            (Text)
 import qualified Data.Text            as Text
+
 import           Network.AWS.Data
 import           Network.AWS.DynamoDB
 
@@ -66,12 +71,15 @@ instance (Item a, Item b) => Item (a, b) where
     decode m      = (,) <$> decode m <*> decode m
 
 instance Item Encrypted where
-    encode (Encrypted k h c) = encode k <> encode h <> encode c
-    decode m                 = Encrypted <$> decode m <*> decode m <*> decode m
+    encode (Encrypted n k h c) =
+        encode n <> encode k <> encode h <> encode c
+    decode m                   =
+        Encrypted <$> decode m <*> decode m <*> decode m <*> decode m
 
 instance Item Name
 instance Item Version
 instance Item Revision
+instance Item Nonce
 instance Item Key
 instance Item Cipher
 instance Item HMAC256
@@ -95,6 +103,9 @@ instance Attr Key ByteString where
 
 instance Attr Cipher ByteString where
     meta = Meta "contents" (avB . traverse) (iso Cipher toBS)
+
+instance Attr Nonce ByteString where
+    meta = Meta "iv" (avB . traverse) (iso Nonce toBS)
 
 instance Attr HMAC256 ByteString where
     meta = Meta "hmac" (avB . traverse) (iso Hex toBS)

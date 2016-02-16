@@ -1,10 +1,8 @@
-{-# LANGUAGE DefaultSignatures     #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 -- |
 -- Module      : Credentials.KMS
@@ -19,28 +17,35 @@ module Credentials.KMS
     , decrypt
     ) where
 
-import           Control.Exception.Lens
+import           Control.Exception.Lens (catching_, handler)
 import           Control.Lens           hiding (Context)
 import           Control.Monad
-import           Control.Monad.Catch
+import           Control.Monad.Catch    (Exception, MonadThrow (..), catches)
+
 import           Credentials.Types
-import           Crypto.Cipher.AES
-import           Crypto.Cipher.Types
+
+import           Crypto.Cipher.AES      (AES128)
+import           Crypto.Cipher.Types    (IV)
+import qualified Crypto.Cipher.Types    as Cipher
 import           Crypto.Error
-import           Crypto.MAC.HMAC        hiding (Context)
+import           Crypto.MAC.HMAC        (hmac)
+import           Crypto.Random          (MonadRandom (..))
+
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
+import           Data.Text              (Text)
 import qualified Data.Text              as Text
-import           Data.Typeable
-import           Network.AWS            hiding (await)
+import           Data.Typeable          (Typeable)
+
+import           Network.AWS
 import           Network.AWS.Data
-import           Network.AWS.Data.Text
 import           Network.AWS.Error      (hasCode, hasStatus)
 import           Network.AWS.KMS        hiding (decrypt, encrypt)
 import qualified Network.AWS.KMS        as KMS
-import           Numeric.Natural
 
-encrypt :: (MonadAWS m, Typeable m)
+import           Numeric.Natural        (Natural)
+
+encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         => KeyId
         -> Context
         -> Name
@@ -52,7 +57,7 @@ encrypt k c n x = do
            & gdkNumberOfBytes     ?~ bytes
            & gdkEncryptionContext .~ fromContext c
 
-    rs <- catches (send rq)
+    rs    <- catches (send rq)
         [ handler (_ServiceError . hasStatus 400 . hasCode "NotFound") $
             throwM . MasterKeyMissing k . fmap toText . _serviceMessage
         , handler _NotFoundException $
@@ -60,12 +65,17 @@ encrypt k c n x = do
         ]
 
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
+        failure            = EncryptFailure c n
 
-    -- TODO: consider scrubbing dataKey, plainText?
-    ctext <- combine x <$> cipher (EncryptFailure c n) dataKey
+    nonce <- getRandomBytes nonceLength
+    iv    <- parseIV failure nonce
+    aes   <- cryptoError failure (Cipher.cipherInit dataKey)
+
+    let !ctext = Cipher.ctrCombine aes iv x
 
     -- Compute an HMAC using the hmac key and the cipher text.
-    return $! Encrypted
+    pure $! Encrypted
+        (Nonce  nonce)
         (Key    (rs ^. gdkrsCiphertextBlob))
         (Cipher ctext)
         (Digest (hmac hmacKey ctext))
@@ -75,8 +85,8 @@ decrypt :: MonadAWS m
         -> Name
         -> Encrypted
         -> m ByteString
-decrypt c n (Encrypted (toBS -> key) (toBS -> ctext) actual) = do
-    let rq = KMS.decrypt key & dEncryptionContext .~ fromContext c
+decrypt c n (Encrypted (Nonce nonce) (toBS -> key) (toBS -> ctext) actual) = do
+    let rq = KMS.decrypt key & decEncryptionContext .~ fromContext c
 
     rs <- catching_ _InvalidCiphertextException (send rq) $
         throwM . DecryptFailure c n $
@@ -91,25 +101,36 @@ decrypt c n (Encrypted (toBS -> key) (toBS -> ctext) actual) = do
 
     let (dataKey, hmacKey) = splitKey p
         expect             = Digest (hmac hmacKey ctext)
+        failure            = DecryptFailure c n
 
     unless (expect == actual) $
         throwM (IntegrityFailure n expect actual)
 
-    combine ctext
-        <$> cipher (DecryptFailure c n) dataKey
+    iv  <- parseIV failure nonce
+    aes <- cryptoError failure (Cipher.cipherInit dataKey)
 
-cipher :: (MonadThrow m, Exception e) => (Text -> e) -> ByteString -> m AES128
-cipher e = onCryptoFailure (throwM . e . Text.pack . show) pure . cipherInit
-
--- FIXME: revisit IV use/initialisation.
-combine :: ByteString -> AES128 -> ByteString
-combine x aes = ctrCombine aes nullIV x
+    pure $! Cipher.ctrCombine aes iv ctext
 
 splitKey :: ByteString -> (ByteString, ByteString)
 splitKey = BS.splitAt 32
 
 bytes :: Natural
 bytes = 64
+
+parseIV :: (MonadThrow m, Exception e)
+       => (Text -> e)
+       -> ByteString
+       -> m (IV AES128)
+parseIV f bs =
+    cryptoError f $
+        maybe (CryptoFailed CryptoError_IvSizeInvalid) CryptoPassed
+              (Cipher.makeIV bs)
+
+cryptoError :: (MonadThrow m, Exception e)
+            => (Text -> e)
+            -> CryptoFailable a
+            -> m a
+cryptoError f = onCryptoFailure (throwM . f . Text.pack . show) pure
 
 -- Decrypted plaintext data. This value may not be returned if the customer
 -- master key is not available or if you didn't have permission to use it.

@@ -1,13 +1,7 @@
-resolver:   nightly-2015-09-13
+resolver:   lts-5.3
 flags:      {}
 extra-deps:
   - uri-bytestring-0.1.7
 packages:
   - credentials
   - credentials-cli
-  - ../amazonka/amazonka
-  - ../amazonka/core
-  - ../amazonka/amazonka-dynamodb
-  - ../amazonka/amazonka-kms
-  - ../amazonka/amazonka-s3
-  - ../amazonka/amazonka-s3-encryption

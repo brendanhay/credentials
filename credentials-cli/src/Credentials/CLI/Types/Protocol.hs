@@ -12,31 +12,21 @@
 --
 module Credentials.CLI.Types.Protocol where
 
-import           Control.Applicative
-import           Control.Lens
-import           Credentials
-import           Credentials.DynamoDB
-import           Credentials.S3
-import           Data.Attoparsec.Text    (Parser)
-import qualified Data.Attoparsec.Text    as A
-import           Data.Bifunctor
-import           Data.ByteString         (ByteString)
-import           Data.ByteString.Builder (Builder)
-import qualified Data.ByteString.Builder as Build
-import qualified Data.ByteString.Char8   as BS8
-import           Data.Char
-import           Data.Data
-import           Data.Foldable           (foldMap)
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as Map
+import           Control.Lens          (preview, _Just)
+
+import           Credentials           (DynamoDB, Ref)
+import           Credentials.DynamoDB  ()
+
+import           Data.Attoparsec.Text  (Parser)
+import qualified Data.Attoparsec.Text  as A
+import           Data.ByteString       (ByteString)
+import qualified Data.ByteString.Char8 as BS8
 import           Data.Maybe
-import           Data.Monoid
-import           Data.Text               (Text)
-import qualified Data.Text               as Text
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.DynamoDB    (dynamoDB)
-import           Network.AWS.S3          (BucketName (..), s3)
+import           Data.Text             (Text)
+import qualified Data.Text             as Text
+
+import           Network.AWS.Data      (FromText, fromText, toBS, toText)
+
 import           URI.ByteString
 
 uriParser :: FromURI a => Parser a
@@ -53,18 +43,6 @@ instance FromURI (Ref DynamoDB) where
     fromURI u = do
         scheme "dynamo" u
         ensure "Table name cannot be empty." (path u)
-
--- s3:/bucket[/prefix]
-instance FromURI (Ref S3) where
-    fromURI u = do
-        scheme "s3" u
-        S3Bucket <$> ensure "Bucket name cannot be empty." b <*> pure (prefix p)
-      where
-        (b, p) = Text.break (== '/') (path u)
-
-        prefix x = listToMaybe [y | not (Text.null y)]
-          where
-            y = Text.dropWhile (== '/') x
 
 ensure :: FromText a => String -> Text -> Either String a
 ensure m x
