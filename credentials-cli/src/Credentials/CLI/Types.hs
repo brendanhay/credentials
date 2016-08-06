@@ -133,36 +133,25 @@ instance Storage App where
 
     layer = unApp
 
-    setup = \case
-        Table  _ s -> embed (setup s)
+    setup       (Table _ s) = embed (setup s)
+    cleanup     (Table _ s) = embed (cleanup s)
+    revisions   (Table _ s) = hoist embed (revisions s)
+    delete n mr (Table _ s) = embed (delete n mr s)
 
-    cleanup = \case
-        Table  _ s -> embed (cleanup s)
+    insert k c n (Value v) (Table _ s) = embed $ insert k c n v s
+    insert k c n (Path  f) (Table _ s) = embed $ do
+        sz <- getFileSize f
+        if sz > 190 * 1024
+            then throwM (StorageFailure "Secret file is larger than allowable storage size.")
+            else do
+                cs <- liftIO . runResourceT $
+                    CB.sourceFile f $$ CL.consume
+                let x = LBS.toStrict (LBS.fromChunks cs)
+                insert k c n x s
 
-    revisions = \case
-        Table  _ s -> hoist embed (revisions s)
-
-    delete n mr = \case
-        Table  _ s -> embed (delete n mr s)
-
-    insert k c n i = \case
-        Table  _ s -> embed $
-            case i of
-                Value v -> insert k c n v s
-                Path  f -> do
-                    sz <- getFileSize f
-                    if sz > 190 * 1024
-                        then throwM (StorageFailure "Some size error goes here.")
-                        else do
-                            cs <- liftIO . runResourceT $
-                                CB.sourceFile f $$ CL.consume
-                            let x = LBS.toStrict (LBS.fromChunks cs)
-                            insert k c n x s
-
-    select c n mr = \case
-        Table  _ s -> do
-            (x, r) <- embed (select c n mr s)
-            return (newResumableSource (CL.sourceList [x]), r)
+    select c n mr (Table _ s) = do
+        (x, r) <- embed (select c n mr s)
+        return (newResumableSource (CL.sourceList [x]), r)
 
 embed :: (Storage m, Layer m ~ AWS) => m a -> App a
 embed = App . lift . layer
@@ -205,17 +194,6 @@ setStore c = configure f
     g u | Just h <- host u = setEndpoint (secure u) h (port u)
         | otherwise        = id
 
-data Pair = Pair Text Text
-
-instance FromText Pair where
-    parser = Pair <$> key <*> val
-      where
-        key = A.skipSpace *> A.takeWhile1 (/= '=')
-        val = A.char '='  *> A.takeText
-
-ctx :: Alternative f => f Pair -> f Context
-ctx f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
-
 (%) :: ToLog a => Builder -> a -> Builder
 b % x = b <> build x
 
@@ -227,3 +205,14 @@ unsafeEnum = sort . map fromConstr . dataTypeConstrs $ dataTypeOf val
 
 string :: ToText a => a -> String
 string = Text.unpack . toText
+
+data Pair = Pair Text Text
+
+instance FromText Pair where
+    parser = Pair <$> key <*> val
+      where
+        key = A.skipSpace *> A.takeWhile1 (/= '=')
+        val = A.char '='  *> A.takeText
+
+ctx :: Alternative f => f Pair -> f Context
+ctx f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
