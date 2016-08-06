@@ -17,24 +17,25 @@
 --
 module Credentials.CLI.Format where
 
-import           Control.Monad.Trans.Resource
+import Control.Monad.Trans.Resource
 
-import           Credentials
-import           Credentials.CLI.Types
+import Credentials
+import Credentials.CLI.Types
 
-import           Data.Aeson                   (ToJSON (..), object, (.=))
-import           Data.Bifunctor
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString.Lazy         as LBS
-import           Data.Conduit
-import           Data.List                    (foldl', intersperse)
-import           Data.List.NonEmpty           (NonEmpty (..))
-import           Data.Monoid
-import qualified Data.Text                    as Text
+import Data.Aeson         (ToJSON (..), object, (.=))
+import Data.Bifunctor
+import Data.ByteString    (ByteString)
+import Data.Conduit
+import Data.List          (foldl', intersperse)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Monoid
 
-import           Network.AWS.Data
+import Network.AWS.Data
 
-import           Options.Applicative.Help     hiding (string)
+import Options.Applicative.Help hiding (string)
+
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text            as Text
 
 data Status
     = Deleted

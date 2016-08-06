@@ -23,39 +23,40 @@ module Credentials.DynamoDB
     , defaultTable
     ) where
 
-import           Control.Exception.Lens
-import           Control.Lens              hiding (Context)
-import           Control.Monad
-import           Control.Monad.Catch
-import           Control.Monad.IO.Class
-import           Control.Retry
+import Control.Exception.Lens
+import Control.Lens           hiding (Context)
+import Control.Monad
+import Control.Monad.Catch
+import Control.Monad.IO.Class
+import Control.Retry
 
-import           Credentials.DynamoDB.Item
-import           Credentials.KMS           as KMS
-import           Credentials.Types
+import Credentials.DynamoDB.Item
+import Credentials.KMS           as KMS
+import Credentials.Types
 
-import           Crypto.Hash
-import           Crypto.Random             (MonadRandom (..))
+import Crypto.Hash
+import Crypto.Random (MonadRandom (..))
 
-import           Data.ByteArray.Encoding
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as BS
-import           Data.Conduit              hiding (await)
-import qualified Data.Conduit              as C
-import qualified Data.Conduit.List         as CL
-import qualified Data.HashMap.Strict       as Map
-import           Data.List.NonEmpty        (NonEmpty (..))
-import qualified Data.List.NonEmpty        as NE
-import           Data.Maybe
-import           Data.Monoid               ((<>))
-import           Data.Ord
-import           Data.Text                 (Text)
-import           Data.Time.Clock.POSIX
-import           Data.Typeable
+import Data.ByteArray.Encoding
+import Data.ByteString         (ByteString)
+import Data.Conduit            hiding (await)
+import Data.List.NonEmpty      (NonEmpty (..))
+import Data.Maybe
+import Data.Monoid             ((<>))
+import Data.Ord
+import Data.Text               (Text)
+import Data.Time.Clock.POSIX
+import Data.Typeable
 
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.DynamoDB
+import Network.AWS
+import Network.AWS.Data
+import Network.AWS.DynamoDB
+
+import qualified Data.ByteString     as BS
+import qualified Data.Conduit        as C
+import qualified Data.Conduit.List   as CL
+import qualified Data.HashMap.Strict as Map
+import qualified Data.List.NonEmpty  as NE
 
 newtype DynamoDB a = DynamoDB { runDynamo :: AWS a }
     deriving

@@ -8,7 +8,6 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Credentials.DynamoDB.Item
@@ -20,24 +19,25 @@
 --
 module Credentials.DynamoDB.Item where
 
-import           Control.Lens         (Prism', Traversal')
-import           Control.Lens         (iso, lens, preview, prism', review, view)
-import           Control.Lens         ((&), (.~), (?~), (^.))
-import           Control.Monad.Catch  (MonadThrow (..))
+import Control.Lens        (Lens', Prism')
+import Control.Lens        (iso, lens, preview, prism', review, view)
+import Control.Lens        ((&), (.~), (?~), (^.))
+import Control.Monad.Catch (MonadThrow (..))
 
-import           Credentials.Types
+import Credentials.Types
 
-import           Data.ByteString      (ByteString)
-import           Data.HashMap.Strict  (HashMap)
-import qualified Data.HashMap.Strict  as Map
-import           Data.Maybe           (mapMaybe)
-import           Data.Monoid          ((<>))
-import           Data.Proxy           (Proxy (..))
-import           Data.Text            (Text)
-import qualified Data.Text            as Text
+import Data.ByteString     (ByteString)
+import Data.HashMap.Strict (HashMap)
+import Data.Maybe          (fromMaybe, mapMaybe)
+import Data.Monoid         ((<>))
+import Data.Proxy          (Proxy (..))
+import Data.Text           (Text)
 
-import           Network.AWS.Data
-import           Network.AWS.DynamoDB
+import Network.AWS.Data
+import Network.AWS.DynamoDB
+
+import qualified Data.HashMap.Strict as Map
+import qualified Data.Text           as Text
 
 -- | The DynamoDB field used for optimistic locking.
 newtype Version = Version Integer
@@ -72,9 +72,15 @@ instance (Item a, Item b) => Item (a, b) where
 
 instance Item Encrypted where
     encode (Encrypted n k h c) =
-        encode n <> encode k <> encode h <> encode c
-    decode m                   =
-        Encrypted <$> decode m <*> decode m <*> decode m <*> decode m
+            encode n
+         <> encode k
+         <> encode h
+         <> encode c
+    decode m = Encrypted
+        <$> decode m
+        <*> decode m
+        <*> decode m
+        <*> decode m
 
 instance Item Name
 instance Item Version
@@ -84,45 +90,45 @@ instance Item Key
 instance Item Cipher
 instance Item HMAC256
 
-data Meta a b = Meta Text (Traversal' AttributeValue b) (Prism' b a)
+data Meta a b = Meta Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
 
 class Attr a b | a -> b where
     meta :: Meta a b
 
 instance Attr Name Text where
-    meta = Meta "name" (avS . traverse) text
+    meta = Meta "name" avS text
 
 instance Attr Version Text where
-    meta = Meta "version" (avN . traverse) text
+    meta = Meta "version" avN text
 
 instance Attr Revision ByteString where
-    meta = Meta "revision" (avB . traverse) (iso Revision toBS)
+    meta = Meta "revision" avB (iso Revision toBS)
 
 instance Attr Key ByteString where
-    meta = Meta "key" (avB . traverse) (iso Key toBS)
+    meta = Meta "key" avB (iso Key toBS)
 
 instance Attr Cipher ByteString where
-    meta = Meta "contents" (avB . traverse) (iso Cipher toBS)
+    meta = Meta "contents" avB (iso Cipher toBS)
 
 instance Attr Nonce ByteString where
-    meta = Meta "iv" (avB . traverse) (iso Nonce toBS)
+    meta = Meta "iv" avB (iso Nonce toBS)
 
 instance Attr HMAC256 ByteString where
-    meta = Meta "hmac" (avB . traverse) (iso Hex toBS)
+    meta = Meta "hmac" avB (iso Hex toBS)
 
 instance Attr Context (HashMap Text Text) where
      meta = Meta "matdesc" (lens f g) (iso Context fromContext)
        where
-         f = Map.fromList . mapMaybe q . Map.toList . view avM
+         f = Just . Map.fromList . mapMaybe q . Map.toList . view avM
            where
              q (k, v) = (k,) <$> v ^. avS
 
-         g s x = s & avM .~ Map.map q x
+         g s x = s & avM .~ Map.map q (fromMaybe mempty x)
            where
              q a = attributeValue & avS ?~ a
 
 toAttr :: Attr a b => a -> HashMap Text AttributeValue
-toAttr x = [(k, attributeValue & l .~ review p x)]
+toAttr x = [(k, attributeValue & l ?~ review p x)]
   where
     Meta k l p = meta
 
@@ -134,8 +140,10 @@ fromAttr m = require >>= parse
     Meta k l p = meta
 
     require = maybe missing pure (Map.lookup k m)
-
-    parse (view l -> x) = maybe (invalid x) pure (preview p x)
+    parse x =
+        case view l x of
+            Nothing -> missing
+            Just y  -> maybe (invalid y) pure (preview p y)
 
     missing = throwM (FieldMissing k (Map.keys m))
     invalid = throwM . FieldInvalid k . toText

@@ -15,29 +15,32 @@
 --
 module Credentials.Types where
 
-import           Control.Exception.Lens  (exception)
-import           Control.Lens            hiding (Context)
-import           Control.Monad.Catch     (Exception, SomeException)
+import Control.Exception.Lens (exception)
+import Control.Lens           hiding (Context)
+import Control.Monad.Catch    (Exception, SomeException)
 
-import           Crypto.Hash             (SHA256)
-import           Crypto.MAC.HMAC         (HMAC)
+import Crypto.Hash     (SHA256)
+import Crypto.MAC.HMAC (HMAC)
 
-import           Data.ByteArray          (Bytes)
-import           Data.ByteArray.Encoding (Base (Base16), convertToBase)
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as BS8
-import           Data.Conduit            (Source)
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as Map
-import           Data.List.NonEmpty      (NonEmpty (..))
-import           Data.Text               (Text)
-import           Data.Typeable           (Typeable)
+import Data.ByteArray          (Bytes)
+import Data.ByteArray.Encoding (Base (Base16), convertToBase)
+import Data.ByteString         (ByteString)
+import Data.Conduit            (Source)
+import Data.HashMap.Strict     (HashMap)
+import Data.List.NonEmpty      (NonEmpty (..))
+import Data.Text               (Text)
+import Data.Typeable           (Typeable)
 
-import           Network.AWS.Data
+import Network.AWS.Data
+
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.HashMap.Strict   as Map
 
 authTagLength, nonceLength :: Int
 authTagLength = 16
 nonceLength   = 16
+
+-- FIXME: encode as base 16/64 in dynamodb.
 
 -- | AES128 CTR mode block cipher initialisation vector.
 newtype Nonce = Nonce ByteString

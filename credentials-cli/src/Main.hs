@@ -18,33 +18,34 @@
 --
 module Main (main) where
 
-import           Control.Exception.Lens
-import           Control.Lens                    ((.~), (<&>))
-import           Control.Monad.Catch
-import           Control.Monad.Morph             (hoist)
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Resource
+import Control.Exception.Lens
+import Control.Lens                 ((.~), (<&>))
+import Control.Monad.Catch
+import Control.Monad.Morph          (hoist)
+import Control.Monad.Reader
+import Control.Monad.Trans.Resource
 
-import           Credentials                     hiding (context)
-import           Credentials.CLI.Format
-import           Credentials.CLI.IO
-import           Credentials.CLI.Options
-import           Credentials.CLI.Types
+import Credentials             hiding (context)
+import Credentials.CLI.Format
+import Credentials.CLI.IO
+import Credentials.CLI.Options
+import Credentials.CLI.Types
 
-import           Data.ByteString.Builder         (Builder)
-import qualified Data.ByteString.Lazy            as LBS
-import           Data.Conduit
-import           Data.Conduit.Lazy
-import qualified Data.Conduit.List               as CL
-import           Data.List.NonEmpty              (NonEmpty)
-import           Data.Text                       (Text)
+import Data.ByteString.Builder (Builder)
+import Data.Conduit
+import Data.Conduit.Lazy
+import Data.List.NonEmpty      (NonEmpty)
+import Data.Text               (Text)
 
-import           Network.AWS
+import Network.AWS
 
-import           Options.Applicative             hiding (optional)
-import           Options.Applicative.Help.Pretty
+import Options.Applicative             hiding (optional)
+import Options.Applicative.Help.Pretty
 
-import           System.IO
+import System.IO
+
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Conduit.List    as CL
 
 default (Builder, Text)
 
@@ -173,7 +174,7 @@ common = Options
         <> completes "The AWS region in which to operate."
              "The following regions are supported:"
                  (map (,mempty) unsafeEnum)
-             Frankfurt Nothing
+             defaultRegion Nothing
          )
 
     <*> textOption
@@ -184,7 +185,7 @@ common = Options
              "The URI format must follow the following protocol:"
                  [ ("dynamo:/[/host[:port]]/table-name", "")
                  ]
-             defaultStore
+             (defaultStore defaultRegion)
              (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \
                    \the default AWS endpoints will be used.")
          )

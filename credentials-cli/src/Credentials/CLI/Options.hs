@@ -10,18 +10,19 @@
 --
 module Credentials.CLI.Options where
 
-import           Credentials.CLI.Types
+import Credentials.CLI.Types
 
-import           Data.Bifunctor
-import           Data.List                (foldl')
-import qualified Data.Text                as Text
+import Data.Bifunctor
+import Data.List      (foldl')
 
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
+import Network.AWS.Data
+import Network.AWS.Data.Text
 
-import           Options.Applicative      hiding (optional)
-import qualified Options.Applicative      as Opt
-import           Options.Applicative.Help hiding (string)
+import Options.Applicative      hiding (optional)
+import Options.Applicative.Help hiding (string)
+
+import qualified Data.Text           as Text
+import qualified Options.Applicative as Opt
 
 data Fact
     = Required

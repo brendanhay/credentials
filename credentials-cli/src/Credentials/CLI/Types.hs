@@ -20,38 +20,40 @@
 --
 module Credentials.CLI.Types where
 
-import           Control.Monad.Base
-import           Control.Monad.Catch
-import           Control.Monad.Morph             (hoist)
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Resource
+import Control.Monad.Base
+import Control.Monad.Catch
+import Control.Monad.Morph          (hoist)
+import Control.Monad.Reader
+import Control.Monad.Trans.Resource
 
-import           Credentials
-import           Credentials.CLI.Types.Protocol
-import           Credentials.DynamoDB
+import Credentials
+import Credentials.CLI.Types.Protocol
+import Credentials.DynamoDB
 
-import qualified Data.Attoparsec.Text            as A
-import           Data.ByteString                 (ByteString)
-import           Data.ByteString.Builder         (Builder)
-import qualified Data.ByteString.Lazy            as LBS
-import           Data.Conduit
-import qualified Data.Conduit.Binary             as CB
-import           Data.Conduit.Lazy
-import qualified Data.Conduit.List               as CL
-import           Data.Data
-import qualified Data.HashMap.Strict             as Map
-import           Data.List                       (sort)
-import qualified Data.Text                       as Text
+import Data.ByteString         (ByteString)
+import Data.ByteString.Builder (Builder)
+import Data.Conduit
+import Data.Conduit.Lazy
+import Data.Data
+import Data.List               (sort)
+import Data.Text               (Text)
 
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Data.Body           (RsBody (..))
-import           Network.AWS.Data.Text
-import           Network.AWS.DynamoDB            (dynamoDB)
-import           Options.Applicative
-import           Options.Applicative.Help.Pretty (Pretty (..), text)
+import Network.AWS
+import Network.AWS.Data
+import Network.AWS.Data.Body           (RsBody (..))
+import Network.AWS.DynamoDB            (dynamoDB)
+import Network.AWS.Endpoint
+import Options.Applicative
+import Options.Applicative.Help.Pretty (Pretty (..), text)
 
-import           URI.ByteString                  hiding (uriParser)
+import URI.ByteString hiding (uriParser)
+
+import qualified Data.Attoparsec.Text as A
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Conduit.Binary  as CB
+import qualified Data.Conduit.List    as CL
+import qualified Data.HashMap.Strict  as Map
+import qualified Data.Text            as Text
 
 data Force
     = NoPrompt
@@ -181,12 +183,18 @@ instance Show   Store where show   = Text.unpack . toText
 instance Pretty Store where pretty = text . show
 instance ToLog  Store where build  = build . toText
 
-defaultStore :: Store
-defaultStore = Table u defaultTable
+defaultRegion :: Region
+defaultRegion = Frankfurt
+
+defaultStore :: Region -> Store
+defaultStore r = Table u defaultTable
   where
     u = URI s (Just a) ("/" <> toBS defaultTable) mempty Nothing
     s = Scheme "dynamo"
-    a = Authority Nothing (Host "localhost") (Just (Port 8000))
+    a = Authority Nothing h (Just p)
+    h = Host (_endpointHost e)
+    p = Port (_endpointPort e)
+    e = defaultEndpoint dynamoDB r
 
 setStore :: HasEnv a => Options -> a -> a
 setStore c = configure f

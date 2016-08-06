@@ -17,33 +17,34 @@ module Credentials.KMS
     , decrypt
     ) where
 
-import           Control.Exception.Lens (catching_, handler)
-import           Control.Lens           hiding (Context)
-import           Control.Monad
-import           Control.Monad.Catch    (Exception, MonadThrow (..), catches)
+import Control.Exception.Lens (catching_, handler)
+import Control.Lens           hiding (Context)
+import Control.Monad
+import Control.Monad.Catch    (Exception, MonadThrow (..), catches)
 
-import           Credentials.Types
+import Credentials.Types
 
-import           Crypto.Cipher.AES      (AES128)
-import           Crypto.Cipher.Types    (IV)
-import qualified Crypto.Cipher.Types    as Cipher
-import           Crypto.Error
-import           Crypto.MAC.HMAC        (hmac)
-import           Crypto.Random          (MonadRandom (..))
+import Crypto.Cipher.AES   (AES128)
+import Crypto.Cipher.Types (IV)
+import Crypto.Error
+import Crypto.MAC.HMAC     (hmac)
+import Crypto.Random       (MonadRandom (..))
 
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as BS
-import           Data.Text              (Text)
-import qualified Data.Text              as Text
-import           Data.Typeable          (Typeable)
+import Data.ByteString (ByteString)
+import Data.Text       (Text)
+import Data.Typeable   (Typeable)
 
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Error      (hasCode, hasStatus)
-import           Network.AWS.KMS        hiding (decrypt, encrypt)
-import qualified Network.AWS.KMS        as KMS
+import Network.AWS
+import Network.AWS.Data
+import Network.AWS.Error (hasCode, hasStatus)
+import Network.AWS.KMS   hiding (decrypt, encrypt)
 
-import           Numeric.Natural        (Natural)
+import Numeric.Natural (Natural)
+
+import qualified Crypto.Cipher.Types as Cipher
+import qualified Data.ByteString     as BS
+import qualified Data.Text           as Text
+import qualified Network.AWS.KMS     as KMS
 
 encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         => KeyId
