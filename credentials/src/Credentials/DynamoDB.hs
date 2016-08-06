@@ -85,7 +85,7 @@ instance Storage DynamoDB where
 
     layer        = runDynamo
     setup        = setup'
-    cleanup      = cleanup'
+    destroy      = destroy'
     revisions  r = safe r (revisions'  r)
     delete n v r = safe r (delete' n v r)
 
@@ -129,8 +129,8 @@ setup' t@(toText -> t') = do
         void $ await tableExists (describeTable t')
     pure $ if p then Exists else Created
 
-cleanup' :: MonadAWS m => Ref DynamoDB -> m ()
-cleanup' t@(toText -> t') = do
+destroy' :: MonadAWS m => Ref DynamoDB -> m ()
+destroy' t@(toText -> t') = do
     p <- exists t
     when p $ do
         void $ send (deleteTable t')

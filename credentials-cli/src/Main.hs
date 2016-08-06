@@ -51,7 +51,7 @@ default (Builder, Text)
 
 main :: IO ()
 main = do
-    (c, m) <- customExecParser (prefs showHelpOnError) options
+    (c, m) <- customExecParser (prefs (showHelpOnError <> columns 90)) options
     l      <- newLogger (level c) stderr
     e      <- newEnv (region c) Discover <&> (envLogger .~ l) . setStore c
     catches (runApp e c (program c m))
@@ -60,19 +60,6 @@ main = do
 
 program :: Options -> Mode -> App ()
 program Options{region = r, store = s} = \case
-    Setup -> do
-        says ("Setting up " % s % " in " % r % ".")
-        says "Running ..."
-        setup s >>= emit . SetupR
-        says "Done."
-
-    Cleanup f -> do
-        says ("This will delete " % s % " from " % r % "!")
-        prompt f $ do
-            cleanup s
-            emit CleanupR
-        says "Done."
-
     List -> do
         says ("Listing contents of " % s % " in " % r % "...")
         runLazy (revisions s) >>= emit . ListR
@@ -111,6 +98,19 @@ program Options{region = r, store = s} = \case
             says ("Truncated " % n % ".")
         says "Done."
 
+    Setup -> do
+        says ("Setting up " % s % " in " % r % ".")
+        says "Running ..."
+        setup s >>= emit . SetupR
+        says "Done."
+
+    Destroy f -> do
+        says ("This will delete " % s % " from " % r % "!")
+        prompt f $ do
+            destroy s
+            emit DestroyR
+        says "Done."
+
 options :: ParserInfo (Options, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
@@ -118,24 +118,12 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
         <+> "- Administration tool for managing secure, shared credentials."
 
     modes = hsubparser $ mconcat
-        [ mode "setup"
-            (pure Setup)
-            "Setup a new credential store."
-            "This will run the necessary actions to create a new credential store. \
-            \This action is idempotent and if the store already exists, \
-            \the operation will succeed with exit status 0."
-
-        , mode "cleanup"
-            (Cleanup <$> force)
-            "Remove a credential store."
-            "Warning: This will completely remove the credential store. For some \
-            \storage engines this action is irrevocable unless you specifically \
-            \perform backups for your data."
-
-        , mode "list"
+        [ mode "list"
             (pure List)
             "List credential names and their respective revisions."
-            "The -u,--uri option takes a URI conforming to one of the following protocols"
+            "This does not perform decryption of any credentials, and can be used \
+            \to obtain an overview of the credential names and revisions that \
+            \are stored."
 
         , mode "get"
             (Get <$> context <*> name <*> optional revision)
@@ -151,21 +139,38 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
         , mode "delete"
             (Delete <$> name <*> require revision <*> force)
             "Remove a specific credential revision."
-            "Foo"
+            "Please note that if an application is pinned to the revision specified \
+            \by --revision, it will no longer be able to decrypt the credential."
 
         , mode "truncate"
             (Truncate <$> name <*> force)
             "Truncate a specific credential's revisions."
-            "Bar"
+            "This will remove all but the most recent credential revision. \
+            \That is, after running this command you will have exactly _one_ \
+            \revision for the given credential name."
+
+        , mode "setup-store"
+            (pure Setup)
+            "Setup a new credential store."
+            "This will run the necessary actions to create a new credential store. \
+            \This action is idempotent and if the store already exists, \
+            \the operation will succeed with exit status 0."
+
+        , mode "destroy-store"
+            (Destroy <$> force)
+            "Remove an entire credential store."
+            "Warning: This will completely remove the credential store. For some \
+            \storage engines this action is irrevocable unless you specifically \
+            \perform backups for your data."
         ]
-        --
+
 mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
 mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
     desc = progDescDoc (Just $ wrap h)
     foot = footerDoc   (Just $ indent 2 (wrap f) <> line)
 
-common :: Parser (Options)
+common :: Parser Options
 common = Options
     <$> textOption
          ( short 'r'
@@ -239,7 +244,8 @@ context = ctx $ textOption
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
-   <> describe "A key/value pair to add to the encryption context."
+   <> describe "A key/value pair to add to the encryption context. \
+               \The same context must be provided during encryption and decryption."
         (Just $ "You can enter multiple key/value pairs. For example:"
       </> indent 2 "-c foo=bar -c something=\"containing spaces\" ..."
         ) Optional

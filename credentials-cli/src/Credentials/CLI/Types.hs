@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -65,7 +64,7 @@ data Input
 
 data Mode
     = Setup
-    | Cleanup  !Force
+    | Destroy  !Force
     | List
     | Put      !KeyId   !Context  !Name !Input
     | Get      !Context !Name     !(Maybe Revision)
@@ -134,8 +133,8 @@ instance Storage App where
     layer = unApp
 
     setup       (Table _ s) = embed (setup s)
-    cleanup     (Table _ s) = embed (cleanup s)
-    revisions   (Table _ s) = hoist embed (revisions s)
+    destroy     (Table _ s) = embed (destroy s)
+    revisions   (Table _ s) = embed `hoist` revisions s
     delete n mr (Table _ s) = embed (delete n mr s)
 
     insert k c n (Value v) (Table _ s) = embed $ insert k c n v s

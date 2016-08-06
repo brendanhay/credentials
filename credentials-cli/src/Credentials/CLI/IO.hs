@@ -16,15 +16,13 @@ module Credentials.CLI.IO where
 import Control.Arrow
 import Control.Monad.Reader
 
-import Credentials
 import Credentials.CLI.Format
 import Credentials.CLI.Types
 
 import Data.Aeson               (ToJSON (..))
 import Data.Aeson.Encode
 import Data.Aeson.Encode.Pretty
-import Data.ByteString.Builder  (Builder)
-import Data.ByteString.Builder  (hPutBuilder, stringUtf8)
+import Data.ByteString.Builder  (Builder, hPutBuilder, stringUtf8)
 import Data.Char                (isSpace, toLower)
 import Data.Monoid
 
@@ -35,7 +33,6 @@ import Options.Applicative.Help.Pretty
 import System.Exit
 import System.IO
 
-import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as Build
 
 default (Builder)

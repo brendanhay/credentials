@@ -106,6 +106,9 @@ instance ToText Setup where
 instance ToLog Setup where
     build = build . toText
 
+-- This exists since previously S3 storage was supported.
+-- There is potential to re-add this at a later date, or potentially another
+-- low latency storage backend such as redis.
 class Monad m => Storage m where
     -- | The underlying storage layer.
     type Layer m :: * -> *
@@ -119,7 +122,7 @@ class Monad m => Storage m where
     layer     :: m a -> Layer m a
 
     setup     :: Ref m -> m Setup
-    cleanup   :: Ref m -> m ()
+    destroy   :: Ref m -> m ()
     revisions :: Ref m -> Source m (Name, NonEmpty Revision)
 
     delete :: Name  -> Maybe Revision                    -> Ref m -> m ()
@@ -156,7 +159,7 @@ data CredentialError
       -- ^ Secret with the specified name cannot found.
 
     | OptimisticLockFailure Name Revision Text
-      -- ^ Attempting to insert a revision that (already, or now) exists.
+      -- ^ Attempting to insert a revision that already exists.
 
       deriving (Eq, Show, Typeable)
 
