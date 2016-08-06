@@ -45,7 +45,8 @@ import Network.AWS.Endpoint
 import Options.Applicative
 import Options.Applicative.Help.Pretty (Pretty (..), text)
 
-import URI.ByteString hiding (uriParser)
+import URI.ByteString (Authority (..), Host (..), Port (..), Scheme (..), URI,
+                       URIRef (..))
 
 import qualified Data.Attoparsec.Text as A
 import qualified Data.ByteString.Lazy as LBS
@@ -53,6 +54,7 @@ import qualified Data.Conduit.Binary  as CB
 import qualified Data.Conduit.List    as CL
 import qualified Data.HashMap.Strict  as Map
 import qualified Data.Text            as Text
+import qualified URI.ByteString       as URI
 
 data Force
     = NoPrompt
@@ -164,7 +166,7 @@ instance FromURI Store where
     fromURI u = Table u <$> fromURI u
 
 instance ToText Store where
-    toText = toText . serializeURI' . \case
+    toText = toText . URI.serializeURI' . \case
         Table u _ -> u
 
 instance Show   Store where show   = Text.unpack . toText
