@@ -10,9 +10,9 @@
 
 This library provides a unified interface for managing secure, shared credentials.
 
-It uses Amazon Key Management Service (KMS) for master-keys and then locally
+It uses Amazon Key Management Service (KMS) for master key management, locally
 encrypts and decrypts secrets, which are then stored in any of the supported
-storage backends.
+storage backends. (Currently DynamoDB.)
 
 The use-case is to avoid storing sensitive information such as passwords and
 connection strings in plaintext in places such as source control or on
