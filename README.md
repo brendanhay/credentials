@@ -4,19 +4,13 @@
 [![Hackage Version](https://img.shields.io/hackage/v/credentials.svg)](http://hackage.haskell.org/package/credentials)
 
 * [Description](#description)
-* [Usage](#usage)
 * [Contribute](#contribute)
 * [Licence](#licence)
 
 
 ## Description
 
-> TODO
-
-
-## Usage
-
-> TODO
+Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
 
 ## Contribute

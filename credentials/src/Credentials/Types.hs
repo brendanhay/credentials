@@ -122,7 +122,7 @@ class Monad m => Storage m where
     layer     :: m a -> Layer m a
 
     setup     :: Ref m -> m Setup
-    destroy   :: Ref m -> m ()
+    teardown  :: Ref m -> m ()
     revisions :: Ref m -> Source m (Name, NonEmpty Revision)
 
     delete :: Name  -> Maybe Revision                    -> Ref m -> m ()

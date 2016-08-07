@@ -59,7 +59,7 @@ instance Pretty Emit where
 
 data Result
     = SetupR    Setup
-    | DestroyR
+    | TeardownR
     | PutR      Name Revision
     | GetR      Name Revision LBS.ByteString
     | DeleteR   Name Revision
@@ -69,7 +69,7 @@ data Result
 instance ToLog Result where
     build = \case
         SetupR        s -> build s
-        DestroyR        -> build Deleted
+        TeardownR       -> build Deleted
         PutR      _ r   -> build r
         GetR      _ _ v -> build v
         DeleteR   {}    -> build Deleted
@@ -82,7 +82,7 @@ instance ToLog Result where
 instance ToJSON Result where
     toJSON = \case
         SetupR        s -> object ["status" =~ s]
-        DestroyR        -> object ["status" =~ Deleted]
+        TeardownR       -> object ["status" =~ Deleted]
         PutR      n r   -> object ["name"   =~ n, "revision" =~ r]
         GetR      n r v -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
         DeleteR   n r   -> object ["name"   =~ n, "revision" =~ r, "status" =~ Deleted]
@@ -96,7 +96,7 @@ instance ToJSON Result where
 instance Pretty Result where
     pretty = \case
         SetupR        s -> stat s
-        DestroyR        -> stat Deleted
+        TeardownR       -> stat Deleted
         PutR      n r   -> name n .$. rev r
         GetR      n r v -> name n .$. rev r .$. val v
         DeleteR   n r   -> name n .$. rev r .$. stat Deleted

@@ -14,7 +14,7 @@ via the [credentials](http://hackage.haskell.org/package/credentials) library.
 
 ## Usage
 
-> TODO
+Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
 
 ## Contribute

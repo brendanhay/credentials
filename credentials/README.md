@@ -26,7 +26,7 @@ retrieve sensitive information such as database passwords or private keys on sta
 
 ## Usage
 
-> TODO
+Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
 
 ## Contribute

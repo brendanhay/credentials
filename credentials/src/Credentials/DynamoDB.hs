@@ -85,7 +85,7 @@ instance Storage DynamoDB where
 
     layer        = runDynamo
     setup        = setup'
-    destroy      = destroy'
+    teardown     = teardown'
     revisions  r = safe r (revisions'  r)
     delete n v r = safe r (delete' n v r)
 
@@ -129,8 +129,8 @@ setup' t@(toText -> t') = do
         void $ await tableExists (describeTable t')
     pure $ if p then Exists else Created
 
-destroy' :: MonadAWS m => Ref DynamoDB -> m ()
-destroy' t@(toText -> t') = do
+teardown' :: MonadAWS m => Ref DynamoDB -> m ()
+teardown' t@(toText -> t') = do
     p <- exists t
     when p $ do
         void $ send (deleteTable t')
@@ -197,8 +197,7 @@ delete' :: MonadAWS m
 delete' n r t = case r of
     Just x  -> do
         (v, _) <- select' n (Just x) t
-        void . send $
-            deleteItem (toText t) & diKey .~ encode n <> encode v
+        void . send $ deleteItem (toText t) & diKey .~ encode n <> encode v
     Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
   where
     qry = mkNamed n t

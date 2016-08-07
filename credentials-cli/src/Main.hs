@@ -104,11 +104,11 @@ program Options{region = r, store = s} = \case
         setup s >>= emit . SetupR
         says "Done."
 
-    Destroy f -> do
+    Teardown f -> do
         says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
-            destroy s
-            emit DestroyR
+            teardown s
+            emit TeardownR
         says "Done."
 
 options :: ParserInfo (Options, Mode)
@@ -149,15 +149,15 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             \That is, after running this command you will have exactly _one_ \
             \revision for the given credential name."
 
-        , mode "setup-store"
+        , mode "setup"
             (pure Setup)
             "Setup a new credential store."
             "This will run the necessary actions to create a new credential store. \
             \This action is idempotent and if the store already exists, \
             \the operation will succeed with exit status 0."
 
-        , mode "destroy-store"
-            (Destroy <$> force)
+        , mode "teardown"
+            (Teardown <$> force)
             "Remove an entire credential store."
             "Warning: This will completely remove the credential store. For some \
             \storage engines this action is irrevocable unless you specifically \

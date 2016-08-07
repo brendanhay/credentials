@@ -66,7 +66,7 @@ data Input
 
 data Mode
     = Setup
-    | Destroy  !Force
+    | Teardown  !Force
     | List
     | Put      !KeyId   !Context  !Name !Input
     | Get      !Context !Name     !(Maybe Revision)
@@ -135,7 +135,7 @@ instance Storage App where
     layer = unApp
 
     setup       (Table _ s) = embed (setup s)
-    destroy     (Table _ s) = embed (destroy s)
+    teardown    (Table _ s) = embed (teardown s)
     revisions   (Table _ s) = embed `hoist` revisions s
     delete n mr (Table _ s) = embed (delete n mr s)
 
