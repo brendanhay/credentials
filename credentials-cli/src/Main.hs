@@ -63,12 +63,10 @@ program Options{region = r, store = s} = \case
     List -> do
         says ("Listing contents of " % s % " in " % r % "...")
         runLazy (revisions s) >>= emit . ListR
-        says "Done."
 
     Put k c n x -> do
         says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
         insert k c n x s >>= emit . PutR n
-        says "Done."
 
     Get c n mr -> do
         say "Retrieving"
@@ -80,7 +78,6 @@ program Options{region = r, store = s} = \case
         (src, f) <- unwrapResumable rs
         x        <- runLazy src
         emit (GetR n v (LBS.fromChunks x)) `finally` f
-        says "Done."
 
     Delete n v f -> do
         says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
@@ -88,7 +85,6 @@ program Options{region = r, store = s} = \case
             delete n (Just v) s
             emit (DeleteR n v)
             says ("Deleted revision " % v % " of " % n % ".")
-        says "Done."
 
     Truncate n f -> do
         says ("This will delete all but the latest revision of " % n % " from " % s % " in " % r % "!")
@@ -96,20 +92,17 @@ program Options{region = r, store = s} = \case
             delete n Nothing s
             emit (TruncateR n)
             says ("Truncated " % n % ".")
-        says "Done."
 
     Setup -> do
         says ("Setting up " % s % " in " % r % ".")
         says "Running ..."
         setup s >>= emit . SetupR
-        says "Done."
 
     Teardown f -> do
         says ("This will delete " % s % " from " % r % "!")
         prompt f $ do
             teardown s
             emit TeardownR
-        says "Done."
 
 options :: ParserInfo (Options, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))

@@ -22,7 +22,6 @@ import Control.Monad.Catch    (Exception, SomeException)
 import Crypto.Hash     (SHA256)
 import Crypto.MAC.HMAC (HMAC)
 
-import Data.ByteArray          (Bytes)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString         (ByteString)
 import Data.Conduit            (Source)
@@ -35,12 +34,6 @@ import Network.AWS.Data
 
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.HashMap.Strict   as Map
-
-authTagLength, nonceLength :: Int
-authTagLength = 16
-nonceLength   = 16
-
--- FIXME: encode as base 16/64 in dynamodb.
 
 -- | AES128 CTR mode block cipher initialisation vector.
 newtype Nonce = Nonce ByteString

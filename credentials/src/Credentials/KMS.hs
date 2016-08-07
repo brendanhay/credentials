@@ -24,7 +24,7 @@ import Control.Monad.Catch    (Exception, MonadThrow (..), catches)
 
 import Credentials.Types
 
-import Crypto.Cipher.AES   (AES128)
+import Crypto.Cipher.AES   (AES256)
 import Crypto.Cipher.Types (IV)
 import Crypto.Error
 import Crypto.MAC.HMAC     (hmac)
@@ -55,7 +55,7 @@ encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
 encrypt k c n x = do
     -- Generate a key. First half for data encryption, last for HMAC.
     let rq = generateDataKey (toText k)
-           & gdkNumberOfBytes     ?~ bytes
+           & gdkNumberOfBytes     ?~ keyLength
            & gdkEncryptionContext .~ fromContext c
 
     rs    <- catches (send rq)
@@ -115,13 +115,16 @@ decrypt c n (Encrypted (Nonce nonce) (toBS -> key) (toBS -> ctext) actual) = do
 splitKey :: ByteString -> (ByteString, ByteString)
 splitKey = BS.splitAt 32
 
-bytes :: Natural
-bytes = 64
+nonceLength :: Int
+nonceLength = 16
+
+keyLength :: Natural
+keyLength = 64
 
 parseIV :: (MonadThrow m, Exception e)
        => (Text -> e)
        -> ByteString
-       -> m (IV AES128)
+       -> m (IV AES256)
 parseIV f bs =
     cryptoError f $
         maybe (CryptoFailed CryptoError_IvSizeInvalid) CryptoPassed
