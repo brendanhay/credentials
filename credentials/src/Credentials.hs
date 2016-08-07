@@ -12,8 +12,9 @@
 -- Portability : non-portable (GHC extensions)
 --
 module Credentials
+    (
     -- * Storage Interface
-    ( Storage  (..)
+      Storage  (..)
 
     -- ** DynamoDB
     , DynamoDB
@@ -24,5 +25,5 @@ module Credentials
     , module Credentials.Types
     ) where
 
-import           Credentials.DynamoDB
-import           Credentials.Types
+import Credentials.DynamoDB
+import Credentials.Types
