@@ -117,11 +117,59 @@ require are:
     - `DeleteItem`
 
 It's recommended you allow only the minimal set of permissions as your usecase
-requires.
+requires. For example, the following two IAM policies illustrate the minimum
+allowable API operations for read/write, and read only access respectively:
 
-#### Read and Write
+**Read and Write**
 
-#### Read Only
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "kms:GenerateDataKey"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:kms:us-east-1:AWS_ACCOUNT_ID:alias/credentials"
+    },
+    {
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:Query"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:dynamodb:us-east-1:AWS_ACCOUNT_ID:table/credentials"
+    }
+  ]
+}
+```
+
+**Read Only**
+
+```
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:kms:us-east-1:AWS_ACCOUNT_ID:alias/credentials"
+    },
+    {
+      "Action": [
+        "dynamodb:Query"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:dynamodb:us-east-1:AWS_ACCOUNT_ID:table/credentials"
+    }
+  ]
+}
+```
+
+Remember to replace the use abovce of `AWS_ACCOUNT_ID` with your own account identifier.
 
 ## Security Notes
 
