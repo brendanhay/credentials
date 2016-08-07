@@ -64,11 +64,11 @@ program Options{region = r, store = s} = \case
         says ("Listing contents of " % s % " in " % r % "...")
         runLazy (revisions s) >>= emit . ListR
 
-    Put k c n x -> do
+    Insert k c n x -> do
         says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
-        insert k c n x s >>= emit . PutR n
+        insert k c n x s >>= emit . InsertR n
 
-    Get c n mr -> do
+    Select c n mr -> do
         say "Retrieving"
         case mr of
             Nothing -> pure ()
@@ -77,7 +77,7 @@ program Options{region = r, store = s} = \case
         (rs,  v) <- select c n mr s
         (src, f) <- unwrapResumable rs
         x        <- runLazy src
-        emit (GetR n v (LBS.fromChunks x)) `finally` f
+        emit (SelectR n v (LBS.fromChunks x)) `finally` f
 
     Delete n v f -> do
         says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
@@ -118,13 +118,13 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             \to obtain an overview of the credential names and revisions that \
             \are stored."
 
-        , mode "get"
-            (Get <$> context <*> name <*> optional revision)
+        , mode "select"
+            (Select <$> context <*> name <*> optional revision)
             "Fetch and decrypt a specific credential revision."
             "Defaults to the latest available revision, if --revision is not specified."
 
-        , mode "put"
-            (Put <$> key <*> context <*> name <*> input)
+        , mode "insert"
+            (Insert <$> key <*> context <*> name <*> input)
             "Write and encrypt a new credential revision."
             "You can supply the secret value as a string with --secret, or as \
             \a file path which contents' will be read by using --path."

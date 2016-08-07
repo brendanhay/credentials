@@ -37,7 +37,7 @@ Please see the [introductory blog post](http://brendanhay.nz/credentials) for mo
 
 1. `stack install credentials-cli`
 2. Create a new key in KMS called "credentials". You can do this under Identity
-   and Access Management > Encryption Keys in the AWS develoepr console.
+   and Access Management > Encryption Keys in the AWS developer console.
 3. Make your AWS access credentials available where [amazonka](https://github.com/brendanhay/amazonka) can read them.
    Typically in the `~/.aws/credentials` file, or as `AWS_ACCESS_KEY_ID` and
    `AWS_SECRET_ACCESS_KEY` environment variables.
@@ -57,7 +57,7 @@ dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
 ```
 
 ```
-$ credentials put --name foo --secret "A magical secret."
+$ credentials insert --name foo --secret "A magical secret."
 Writing new revision of foo to dynamo:///credentials in eu-central-1...
 dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
   name: foo
@@ -73,7 +73,7 @@ dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
 ```
 
 ```
-$ credentials get --name foo
+$ credentials select --name foo
 Retrieving foo from dynamo:///credentials in eu-central-1...
 dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
   name: foo

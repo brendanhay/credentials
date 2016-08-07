@@ -68,8 +68,8 @@ data Mode
     = Setup
     | Teardown  !Force
     | List
-    | Put      !KeyId   !Context  !Name !Input
-    | Get      !Context !Name     !(Maybe Revision)
+    | Insert   !KeyId   !Context  !Name !Input
+    | Select   !Context !Name     !(Maybe Revision)
     | Delete   !Name    !Revision !Force
     | Truncate !Name    !Force
 

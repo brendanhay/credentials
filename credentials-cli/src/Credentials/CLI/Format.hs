@@ -17,22 +17,18 @@
 --
 module Credentials.CLI.Format where
 
-import Control.Monad.Trans.Resource
-
 import Credentials
 import Credentials.CLI.Types
 
 import Data.Aeson         (ToJSON (..), object, (.=))
 import Data.Bifunctor
-import Data.ByteString    (ByteString)
-import Data.Conduit
 import Data.List          (foldl', intersperse)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Monoid
 
 import Network.AWS.Data
 
-import Options.Applicative.Help hiding (string)
+import Options.Applicative.Help hiding (list, string)
 
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text            as Text
@@ -60,8 +56,8 @@ instance Pretty Emit where
 data Result
     = SetupR    Setup
     | TeardownR
-    | PutR      Name Revision
-    | GetR      Name Revision LBS.ByteString
+    | InsertR   Name Revision
+    | SelectR   Name Revision LBS.ByteString
     | DeleteR   Name Revision
     | TruncateR Name
     | ListR     [(Name, NonEmpty Revision)]
@@ -70,8 +66,8 @@ instance ToLog Result where
     build = \case
         SetupR        s -> build s
         TeardownR       -> build Deleted
-        PutR      _ r   -> build r
-        GetR      _ _ v -> build v
+        InsertR   _ r   -> build r
+        SelectR   _ _ v -> build v
         DeleteR   {}    -> build Deleted
         TruncateR {}    -> build Truncated
         ListR        rs -> foldMap f rs
@@ -83,8 +79,8 @@ instance ToJSON Result where
     toJSON = \case
         SetupR        s -> object ["status" =~ s]
         TeardownR       -> object ["status" =~ Deleted]
-        PutR      n r   -> object ["name"   =~ n, "revision" =~ r]
-        GetR      n r v -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
+        InsertR   n r   -> object ["name"   =~ n, "revision" =~ r]
+        SelectR   n r v -> object ["name"   =~ n, "revision" =~ r, "secret" =~ toBS v]
         DeleteR   n r   -> object ["name"   =~ n, "revision" =~ r, "status" =~ Deleted]
         TruncateR n     -> object ["name"   =~ n, "status"   =~ Truncated]
         ListR        rs -> object (map go rs)
@@ -97,8 +93,8 @@ instance Pretty Result where
     pretty = \case
         SetupR        s -> stat s
         TeardownR       -> stat Deleted
-        PutR      n r   -> name n .$. rev r
-        GetR      n r v -> name n .$. rev r .$. val v
+        InsertR   n r   -> name n .$. rev r
+        SelectR   n r v -> name n .$. rev r .$. val v
         DeleteR   n r   -> name n .$. rev r .$. stat Deleted
         TruncateR n     -> name n .$. stat Truncated
         ListR        rs -> list rs
