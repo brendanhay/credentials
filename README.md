@@ -18,6 +18,9 @@
 
 ## Description
 
+**Warning:** This is an experimental prototype/preview release which is still
+under heavy development and not intended for public consumption, caveat emptor!
+
 The `credentials` library and CLI provides a unified interface for managing secure, shared credentials.
 
 It uses Amazon Key Management Service (KMS) for master key management, locally
