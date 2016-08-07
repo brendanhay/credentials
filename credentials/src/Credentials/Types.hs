@@ -86,6 +86,7 @@ newtype Cipher = Cipher ByteString deriving (ToByteString)
 -- | An encrypted secret.
 data Encrypted = Encrypted !Nonce !Key !Cipher !HMAC256
 
+-- | Whether the setup action resulting in any setup actions being performed.
 data Setup
     = Created
     | Exists
@@ -109,18 +110,38 @@ class Monad m => Storage m where
     -- | A reference to the storage engine, such as a table or bucket name.
     data Ref m :: *
 
+    -- | The input (inserted) type.
     type In  m :: *
+
+    -- | The output (selected) type.
     type Out m :: *
 
-    layer     :: m a -> Layer m a
+    -- | Unwrap the storage to its inner monad.
+    layer :: m a -> Layer m a
 
-    setup     :: Ref m -> m Setup
-    teardown  :: Ref m -> m ()
+    -- | Setup a new storage layer.
+    -- Calling 'setup' with a non-unique 'Ref' _must_ result in a noop.
+    setup :: Ref m -> m Setup
+
+    -- | Teardown and destroy an existing storage layer.
+    -- Calling 'setup' with a non-existing 'Ref' _must_ result in a noop.
+    teardown :: Ref m -> m ()
+
+    -- | Returning a paginated 'Source' of stored credentials and their
+    -- respective list of 'Revision's.
     revisions :: Ref m -> Source m (Name, NonEmpty Revision)
 
-    delete :: Name  -> Maybe Revision                    -> Ref m -> m ()
-    insert :: KeyId -> Context -> Name -> In m           -> Ref m -> m Revision
-    select ::          Context -> Name -> Maybe Revision -> Ref m -> m (Out m, Revision)
+    -- | Delete a specific credential 'Name'. If no 'Revision' is specified,
+    -- the storage layer _must_ delete all revisions.
+    delete :: Name -> Maybe Revision -> Ref m -> m ()
+
+    -- | Insert a new credential, using the given 'KeyId' and 'Context'
+    -- for encryption.
+    insert :: KeyId -> Context -> Name -> In m -> Ref m -> m Revision
+
+    -- | Select an existing credential, supplying the 'Context' used during encryption.
+    -- If no 'Revision' is specified, the storage layer should return the latest revision.
+    select :: Context -> Name -> Maybe Revision -> Ref m -> m (Out m, Revision)
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
