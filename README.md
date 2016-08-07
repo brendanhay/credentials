@@ -18,17 +18,17 @@
 
 ## Description
 
-When deploying modern applications either on-premise or within a cloud
-environment such as AWS, you typically need access to a multitude of secrets
-such as database credentials, API keys for external third parties, or
-credentials for inter-service communication with our micro-service overlords.
+The `credentials` library and CLI provides a unified interface for managing secure, shared credentials.
 
-One typical erroneous solution to this problem is to store plaintext secrets in source control!
+It uses Amazon Key Management Service (KMS) for master key management, locally
+encrypts and decrypts secrets, which are then stored in any of the supported
+storage backends. (Currently DynamoDB.)
 
-`credentials` is a very simple credential management and
-distribution system that uses Amazon Key Management Service (KMS) for key
-wrapping and master-key storage, and DynamoDB for credential storage and
-sharing.
+The use-case is to avoid storing sensitive information such as passwords and
+connection strings in plaintext in places such as source control or on
+developers' machines. Instead you can securely administer and distribute
+secrets, leveraging Amazon's IAM policies for access control and permissions to
+ensure limited read-only permissions from production/deployed hosts.
 
 Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
