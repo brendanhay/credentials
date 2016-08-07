@@ -19,7 +19,7 @@
 ## Description
 
 **Warning:** This is an experimental prototype/preview release which is still
-under heavy development and not intended for public consumption, caveat emptor!
+in development and not intended for public consumption, caveat emptor!
 
 The `credentials` library and CLI provides a unified interface for managing secure, shared credentials.
 
@@ -31,7 +31,7 @@ The use-case is to avoid storing sensitive information such as passwords and
 connection strings in plaintext in places such as source control or on
 developers' machines. Instead you can securely administer and distribute
 secrets, leveraging Amazon's IAM policies for access control and permissions to
-ensure limited read-only permissions from production/deployed hosts.
+ensure limited read-only permissions from production/deployed hosts where applicable.
 
 Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
@@ -150,7 +150,7 @@ allowable API operations for read/write, and read only access respectively:
 
 **Read Only**
 
-```
+```json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -172,7 +172,7 @@ allowable API operations for read/write, and read only access respectively:
 }
 ```
 
-Remember to replace the use abovce of `AWS_ACCOUNT_ID` with your own account identifier.
+Remember to replace the use of `AWS_ACCOUNT_ID` above with your own account identifier.
 
 ## Security Notes
 
