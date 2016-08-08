@@ -47,10 +47,12 @@ the Python project that inspired `credentials`.
 1. `stack install credentials-cli`
 2. Create a new key in KMS called "credentials". You can do this under Identity
    and Access Management > Encryption Keys in the AWS developer console.
-3. Make your AWS access credentials available where
-   [amazonka](https://github.com/brendanhay/amazonka) can find them. Typically
-   in the [~/.aws/credentials](https://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
-   file, or as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
+3. Your AWS access credentials are available where
+   [amazonka](https://hackage.haskell.org/package/amazonka) can find them. This
+   will be automatic if you are running on an EC2 host, otherwise the
+   [~/.aws/credentials](https://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
+   file, as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment
+   variables need to be configured.
 4. `credentials setup`
 
 
