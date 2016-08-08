@@ -6,11 +6,12 @@
 * [Description](#description)
 * [Setup](#setup)
 * [Usage](#usage)
-    - [Credential Storage](#credential-storage)
-    - [Credential Retrieval](#credential-retrieval)
-    - [Credential Management and Auditing](#credential-management-and-auditing)
+    - [Library Usage](#library-usage)
+    - [CLI Usage](#cli-usage)
+    - [Credential Contexts](#credential-contexts)
     - [Credential Revisions](#credential-revisions)
     - [IAM Policies](#iam-policies)
+* [Pricing](#pricing)
 * [Security Notes](#security-notes)
 * [Contribute](#contribute)
 * [Licence](#licence)
@@ -35,6 +36,10 @@ ensure limited read-only permissions from production/deployed hosts where applic
 
 Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
+If Haskell is not your thing, check out
+[credstash](https://github.com/fugue/credstash), the project that inspired
+`credentials`.
+
 
 ## Setup
 
@@ -43,50 +48,12 @@ Please see the [introductory blog post](http://brendanhay.nz/credentials) for mo
    and Access Management > Encryption Keys in the AWS developer console.
 3. Make your AWS access credentials available where
    [amazonka](https://github.com/brendanhay/amazonka) can find them. Typically
-   in the `~/.aws/credentials` file, or as `AWS_ACCESS_KEY_ID` and
-   `AWS_SECRET_ACCESS_KEY` environment variables.
+   in the [~/.aws/credentials](https://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
+   file, or as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
 4. `credentials setup`
 
 
 ## Usage
-
-A basic example of using the CLI is as follows:
-
-```
-$ credentials setup
-Setting up dynamo:///credentials in eu-central-1.
-Running ...
-dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
-  status: created
-```
-
-```
-$ credentials insert --name foo --secret "A magical secret."
-Writing new revision of foo to dynamo:///credentials in eu-central-1...
-dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
-  name: foo
-  revision: 82687c4
-```
-
-```
-$ credentials list
-Listing contents of dynamo:///credentials in eu-central-1...
-dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
-  foo:
-    - 82687c4 # latest
-```
-
-```
-$ credentials select --name foo
-Retrieving foo from dynamo:///credentials in eu-central-1...
-dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
-  name: foo
-  revision: 82687c4
-  secret: A magical secret.
-```
-
-Additional means of formatting the output is available, for example the `--format` option
-supports `json` (JSON formatting) or `echo` (single shell value) output.
 
 The following is an example of using the `credentials` library as a dependency
 of your Haskell project. It retrieves a database connection string containing a
@@ -139,12 +106,45 @@ app :: ByteString -> Application
 app uri rq f = ...
 ```
 
+A basic example of using the CLI is as follows:
 
-### Credential Storage
+```
+$ credentials setup
+Setting up dynamo:///credentials in eu-central-1.
+Running ...
+dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
+  status: created
+```
 
-### Credential Retrieval
+```
+$ credentials insert --name foo --secret "A magical secret."
+Writing new revision of foo to dynamo:///credentials in eu-central-1...
+dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
+  name: foo
+  revision: 82687c4
+```
 
-### Credential Context
+```
+$ credentials select --name foo
+Retrieving foo from dynamo:///credentials in eu-central-1...
+dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
+  name: foo
+  revision: 82687c4
+  secret: A magical secret.
+```
+
+```
+$ credentials list
+Listing contents of dynamo:///credentials in eu-central-1...
+dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
+  foo:
+    - 82687c4 # latest
+```
+
+Additional means of formatting the output is available, for example the `--format` option
+supports `json` (JSON formatting) or `echo` (single shell value) output.
+
+### Credential Contexts
 
 KMS [Encryption Context](http://docs.aws.amazon.com/kms/latest/developerguide/encrypt-context.html) is optionally supported,
 which is used to check ciphertext integrity but not stored as part of the encryption parameters.
@@ -171,6 +171,16 @@ Failure to specify the exact encryption context resullts in an informative error
 during decryption.
 
 ### Credential Revisions
+
+Credential storage is immutable and the insertion of a credential into storage is append-only.
+When a value for an existing credential name is inserted a unique revision is generated which
+you can use in combination with the name to uniquely address any credential in the system.
+
+Rotation of credentials can be performed by simply inserting a new value for
+a given credential name, and any system which selects that credential without
+a specific revision will always receive the latest revision's value.
+
+You can also specify the exact revision when selecting a credential to perform pinning.
 
 ### IAM Policies
 
@@ -248,6 +258,14 @@ allowable API operations for read/write, and read only access respectively:
 ```
 
 Remember to replace the use of `AWS_ACCOUNT_ID` above with your own account identifier.
+
+## Pricing
+
+A single master key in KMS costs $1 USD per month. The DynamoDB table throughput
+is configured to use 1 provisioned read and 1 provisioned write, so if you are using
+less than the free tier limit of 25 reads and 25 writes per second, only the KMS
+charges will apply.
+
 
 ## Security Notes
 

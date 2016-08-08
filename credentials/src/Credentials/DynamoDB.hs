@@ -25,11 +25,9 @@ module Credentials.DynamoDB
     ( DynamoTable (..)
     , defaultTable
 
-    -- * Table Operations
+    -- * Operations
     , setup
     , teardown
-
-    -- * Storage Operations
     , insert
     , select
     , delete
