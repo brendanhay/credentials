@@ -85,8 +85,8 @@ dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
   secret: A magical secret.
 ```
 
-Additional means of formatting the output and logging suitable for use in shell scripts is
-available, see the `--help` text for more information.
+Additional means of formatting the output is available, for example the `--format` option
+supports `json` (JSON formatting) or `echo` (single shell value) output.
 
 The following is an example of using the `credentials` library as a dependency
 of your Haskell project. It retrieves a database connection string containing a
