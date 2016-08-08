@@ -58,9 +58,11 @@ import qualified Data.List.NonEmpty  as NE
 newtype DynamoTable = DynamoTable { tableName :: Text }
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
+-- |
 defaultTable :: DynamoTable
-defaultTable = DynamoTable "default"
+defaultTable = DynamoTable "credentials"
 
+-- |
 insert :: (MonadMask m, MonadRandom m, MonadAWS m, Typeable m)
        => KeyId
        -> Context
@@ -72,6 +74,7 @@ insert key ctx name plaintext table = do
     ciphertext <- encrypt key ctx name plaintext
     catchResourceNotFound table (insertEncrypted' name ciphertext table)
 
+-- |
 select :: MonadAWS m
        => Context
        -> Name
@@ -83,6 +86,7 @@ select ctx name rev table = do
         catchResourceNotFound table (selectEncrypted' name rev table)
     (,rev') <$> decrypt ctx name ciphertext
 
+-- |
 delete :: MonadAWS m
        => Name
        -> Maybe Revision
@@ -90,11 +94,13 @@ delete :: MonadAWS m
        -> m ()
 delete name rev table = catchResourceNotFound table (delete' name rev table)
 
+-- |
 revisions :: MonadAWS m
           => DynamoTable
           -> Source m (Name, NonEmpty Revision)
 revisions table = catchResourceNotFound table (revisions' table)
 
+-- |
 setup :: MonadAWS m => DynamoTable -> m Setup
 setup table@DynamoTable{..} = do
     p <- exists table
@@ -120,6 +126,7 @@ setup table@DynamoTable{..} = do
            then Exists
            else Created
 
+-- |
 teardown :: MonadAWS m => DynamoTable -> m ()
 teardown table@DynamoTable{..} = do
     p <- exists table

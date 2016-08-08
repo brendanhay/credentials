@@ -46,6 +46,7 @@ import qualified Data.ByteString     as BS
 import qualified Data.Text           as Text
 import qualified Network.AWS.KMS     as KMS
 
+-- |
 encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         => KeyId
         -> Context
@@ -81,6 +82,7 @@ encrypt key ctx name plaintext = do
         (Cipher ciphertext)
         (Digest (hmac hmacKey ciphertext))
 
+-- |
 decrypt :: MonadAWS m
         => Context
         -> Name
