@@ -45,63 +45,78 @@ import Options.Applicative.Help.Pretty
 import System.IO
 
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Conduit.Binary  as CB
 import qualified Data.Conduit.List    as CL
 
 default (Builder, Text)
 
 main :: IO ()
 main = do
-    (c, m) <- customExecParser (prefs (showHelpOnError <> columns 90)) options
-    l      <- newLogger (level c) stderr
-    e      <- newEnv (region c) Discover <&> (envLogger .~ l) . setStore c
-    catches (runApp e c (program c m))
-        [ handler _CredentialError $ \x -> quit 1 (show x)
+    (opt, mode) <- customExecParser (prefs (showHelpOnError <> columns 90)) options
+
+    lgr <- newLogger (level opt) stderr
+    env <- newEnv (region opt) Discover <&> (envLogger .~ lgr) . setStore opt
+
+    catches (runApp env opt (program opt mode))
+        [ handler _CredentialError (quit 1 . show)
         ]
 
 program :: Options -> Mode -> App ()
-program Options{region = r, store = s} = \case
+program Options{store = store@(Table _ table), ..} = \case
     List -> do
-        says ("Listing contents of " % s % " in " % r % "...")
-        runLazy (revisions s) >>= emit . ListR
+        says ("Listing contents of " % store % " in " % region % "...")
+        runLazy (revisions table) >>=
+            emit . ListR
 
-    Insert k c n x -> do
-        says ("Writing new revision of " % n % " to " % s % " in " % r % "...")
-        insert k c n x s >>= emit . InsertR n
+    Insert key ctx name input -> do
+        says ("Writing new revision of " %
+              name % " to " % store % " in " % region % "...")
+        rev <- case input of
+            Value val  -> insert key ctx name val table
+            Path  path -> do
+                sz <- getFileSize path
+                if sz > 190 * 1024
+                    then throwM $ StorageFailure
+                        "Secret file is larger than allowable storage size."
+                    else do
+                        cs <- liftIO . runResourceT $
+                            CB.sourceFile path $$ CL.consume
+                        let val = LBS.toStrict (LBS.fromChunks cs)
+                        insert key ctx name val table
+        emit (InsertR name rev)
 
-    Select c n mr -> do
+    Select ctx name rev -> do
         say "Retrieving"
-        case mr of
+        case rev of
             Nothing -> pure ()
-            Just r' -> say (" revision " % r' % " of")
-        says (" " % n % " from " % s % " in " % r % "...")
-        (rs,  v) <- select c n mr s
-        (src, f) <- unwrapResumable rs
-        x        <- runLazy src
-        emit (SelectR n v (LBS.fromChunks x)) `finally` f
+            Just r  -> say (" revision " % r % " of")
+        says (" " % name % " from " % store % " in " % region % "...")
+        (val, rev') <- select ctx name rev table
+        emit (SelectR name rev' val)
 
-    Delete n v f -> do
-        says ("This will delete revision " % v % " of " % n % " from " % s % " in " % r % "!")
-        prompt f $ do
-            delete n (Just v) s
-            emit (DeleteR n v)
-            says ("Deleted revision " % v % " of " % n % ".")
+    Delete name rev force -> do
+        says ("This will delete revision " %
+              rev % " of " % name % " from " % store % " in " % region % "!")
+        prompt force $ do
+            delete name (Just rev) table
+            emit (DeleteR name rev)
 
-    Truncate n f -> do
-        says ("This will delete all but the latest revision of " % n % " from " % s % " in " % r % "!")
-        prompt f $ do
-            delete n Nothing s
-            emit (TruncateR n)
-            says ("Truncated " % n % ".")
+    Truncate name force -> do
+        says ("This will delete all but the latest revision of " %
+              name % " from " % store % " in " % region % "!")
+        prompt force $ do
+            delete name Nothing table
+            emit (TruncateR name)
 
     Setup -> do
-        says ("Setting up " % s % " in " % r % ".")
+        says ("Setting up " % store % " in " % region % ".")
         says "Running ..."
-        setup s >>= emit . SetupR
+        setup table >>= emit . SetupR
 
-    Teardown f -> do
-        says ("This will delete " % s % " from " % r % "!")
-        prompt f $ do
-            teardown s
+    Teardown force -> do
+        says ("This will delete " % store % " from " % region % "!")
+        prompt force $ do
+            teardown table
             emit TeardownR
 
 options :: ParserInfo (Options, Mode)

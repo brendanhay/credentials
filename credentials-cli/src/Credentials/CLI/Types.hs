@@ -27,7 +27,8 @@ import Control.Monad.Trans.Resource
 
 import Credentials
 import Credentials.CLI.Types.Protocol
-import Credentials.DynamoDB
+
+import Crypto.Random (MonadRandom (..))
 
 import Data.ByteString         (ByteString)
 import Data.ByteString.Builder (Builder)
@@ -39,9 +40,9 @@ import Data.Text               (Text)
 
 import Network.AWS
 import Network.AWS.Data
-import Network.AWS.Data.Body           (RsBody (..))
-import Network.AWS.DynamoDB            (dynamoDB)
+import Network.AWS.DynamoDB (dynamoDB)
 import Network.AWS.Endpoint
+
 import Options.Applicative
 import Options.Applicative.Help.Pretty (Pretty (..), text)
 
@@ -49,9 +50,6 @@ import URI.ByteString (Authority (..), Host (..), Port (..), Scheme (..), URI,
                        URIRef (..))
 
 import qualified Data.Attoparsec.Text as A
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Conduit.Binary  as CB
-import qualified Data.Conduit.List    as CL
 import qualified Data.HashMap.Strict  as Map
 import qualified Data.Text            as Text
 import qualified URI.ByteString       as URI
@@ -114,8 +112,18 @@ newtype App a = App { unApp :: ReaderT Options AWS a }
         , MonadBase IO
         )
 
-instance MonadAWS      App where liftAWS       = App . lift
-instance MonadResource App where liftResourceT = App . liftResourceT
+--     select c n mr (Table _ s) = do
+--         (x, r) <- embed (select c n mr s)
+--         return (newResumableSource (CL.sourceList [x]), r)
+
+instance MonadAWS App where
+    liftAWS = App . lift
+
+instance MonadResource App where
+    liftResourceT = App . liftResourceT
+
+instance MonadRandom App where
+    getRandomBytes = liftIO . getRandomBytes
 
 runApp :: Env -> Options -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
@@ -123,41 +131,7 @@ runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
 runLazy :: Source App a -> App [a]
 runLazy = App . lazyConsume . hoist unApp
 
-instance Storage App where
-    type Layer App = ReaderT Options AWS
-
-    data Ref App
-        = Table URI (Ref DynamoDB)
-
-    type In  App = Input
-    type Out App = ResumableSource App ByteString
-
-    layer = unApp
-
-    setup       (Table _ s) = embed (setup s)
-    teardown    (Table _ s) = embed (teardown s)
-    revisions   (Table _ s) = embed `hoist` revisions s
-    delete n mr (Table _ s) = embed (delete n mr s)
-
-    insert k c n (Value v) (Table _ s) = embed $ insert k c n v s
-    insert k c n (Path  f) (Table _ s) = embed $ do
-        sz <- getFileSize f
-        if sz > 190 * 1024
-            then throwM (StorageFailure "Secret file is larger than allowable storage size.")
-            else do
-                cs <- liftIO . runResourceT $
-                    CB.sourceFile f $$ CL.consume
-                let x = LBS.toStrict (LBS.fromChunks cs)
-                insert k c n x s
-
-    select c n mr (Table _ s) = do
-        (x, r) <- embed (select c n mr s)
-        return (newResumableSource (CL.sourceList [x]), r)
-
-embed :: (Storage m, Layer m ~ AWS) => m a -> App a
-embed = App . lift . layer
-
-type Store = Ref App
+data Store = Table URI DynamoTable
 
 instance FromText Store where
     parser = uriParser

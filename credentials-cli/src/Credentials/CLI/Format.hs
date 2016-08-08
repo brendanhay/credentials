@@ -22,6 +22,7 @@ import Credentials.CLI.Types
 
 import Data.Aeson         (ToJSON (..), object, (.=))
 import Data.Bifunctor
+import Data.ByteString    (ByteString)
 import Data.List          (foldl', intersperse)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Monoid
@@ -57,7 +58,7 @@ data Result
     = SetupR    Setup
     | TeardownR
     | InsertR   Name Revision
-    | SelectR   Name Revision LBS.ByteString
+    | SelectR   Name Revision ByteString
     | DeleteR   Name Revision
     | TruncateR Name
     | ListR     [(Name, NonEmpty Revision)]

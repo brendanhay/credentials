@@ -14,8 +14,7 @@ module Credentials.CLI.Types.Protocol where
 
 import Control.Lens (preview, _Just)
 
-import Credentials          (DynamoDB, Ref)
-import Credentials.DynamoDB ()
+import Credentials (DynamoTable (..))
 
 import Data.Attoparsec.Text (Parser)
 import Data.ByteString      (ByteString)
@@ -40,7 +39,7 @@ class FromURI a where
     fromURI :: URI -> Either String a
 
 -- dynamo:/table-name
-instance FromURI (Ref DynamoDB) where
+instance FromURI DynamoTable where
     fromURI u = do
         scheme "dynamo" u
         ensure "Table name cannot be empty." (path u)

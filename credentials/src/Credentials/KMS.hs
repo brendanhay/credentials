@@ -52,65 +52,66 @@ encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         -> Name
         -> ByteString
         -> m Encrypted
-encrypt k c n x = do
+encrypt key ctx name plaintext = do
     -- Generate a key. First half for data encryption, last for HMAC.
-    let rq = generateDataKey (toText k)
+    let rq = generateDataKey (toText key)
            & gdkNumberOfBytes     ?~ keyLength
-           & gdkEncryptionContext .~ fromContext c
+           & gdkEncryptionContext .~ fromContext ctx
 
-    rs    <- catches (send rq)
+    rs <- catches (send rq)
         [ handler (_ServiceError . hasStatus 400 . hasCode "NotFound") $
-            throwM . MasterKeyMissing k . fmap toText . _serviceMessage
+            throwM . MasterKeyMissing key . fmap toText . _serviceMessage
         , handler _NotFoundException $
-            throwM . MasterKeyMissing k . fmap toText . _serviceMessage
+            throwM . MasterKeyMissing key . fmap toText . _serviceMessage
         ]
 
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
-        failure            = EncryptFailure c n
+        failure            = EncryptFailure ctx name
 
     nonce <- getRandomBytes nonceLength
     iv    <- parseIV failure nonce
     aes   <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    let !ctext = Cipher.ctrCombine aes iv x
+    let !ciphertext = Cipher.ctrCombine aes iv plaintext
 
     -- Compute an HMAC using the hmac key and the cipher text.
     pure $! Encrypted
         (Nonce  nonce)
         (Key    (rs ^. gdkrsCiphertextBlob))
-        (Cipher ctext)
-        (Digest (hmac hmacKey ctext))
+        (Cipher ciphertext)
+        (Digest (hmac hmacKey ciphertext))
 
 decrypt :: MonadAWS m
         => Context
         -> Name
         -> Encrypted
         -> m ByteString
-decrypt c n (Encrypted (Nonce nonce) (toBS -> key) (toBS -> ctext) actual) = do
-    let rq = KMS.decrypt key & decEncryptionContext .~ fromContext c
+decrypt ctx name encrypted = do
+    let Encrypted (Nonce nonce) (toBS -> key) (toBS -> ciphertext) actual = encrypted
+        rq = KMS.decrypt key & decEncryptionContext .~ fromContext ctx
 
     rs <- catching_ _InvalidCiphertextException (send rq) $
-        throwM . DecryptFailure c n $
-            if blankContext c
+        throwM . DecryptFailure ctx name $
+            if blankContext ctx
                 then "Could not decrypt stored key using KMS. \
                      \The credential may require an ecryption context."
                 else  "Could not decrypt stored key using KMS. \
                      \The provided encryption context may not match the one \
                      \used when the credential was stored."
 
-    p  <- plaintext (DecryptFailure c n) rs
+    plaintext <- getPlaintext (DecryptFailure ctx name) rs
 
-    let (dataKey, hmacKey) = splitKey p
-        expect             = Digest (hmac hmacKey ctext)
-        failure            = DecryptFailure c n
+    let (dataKey, hmacKey) = splitKey plaintext
+        expect             = Digest (hmac hmacKey ciphertext)
+        failure            = DecryptFailure ctx name
 
     unless (expect == actual) $
-        throwM (IntegrityFailure n expect actual)
+        throwM (IntegrityFailure name expect actual)
 
     iv  <- parseIV failure nonce
     aes <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    pure $! Cipher.ctrCombine aes iv ctext
+    pure $! Cipher.ctrCombine aes iv ciphertext
 
 splitKey :: ByteString -> (ByteString, ByteString)
 splitKey = BS.splitAt 32
@@ -138,11 +139,11 @@ cryptoError f = onCryptoFailure (throwM . f . Text.pack . show) pure
 
 -- Decrypted plaintext data. This value may not be returned if the customer
 -- master key is not available or if you didn't have permission to use it.
-plaintext :: (MonadThrow m, Exception e)
-          => (Text -> e)
-          -> DecryptResponse
-          -> m ByteString
-plaintext e rs =
+getPlaintext :: (MonadThrow m, Exception e)
+             => (Text -> e)
+             -> DecryptResponse
+             -> m ByteString
+getPlaintext e rs =
     maybe (throwM (e "Decrypted plaintext data not available from KMS."))
           pure
           (rs ^. drsPlaintext)

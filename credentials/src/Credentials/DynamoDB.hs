@@ -4,10 +4,10 @@
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE ViewPatterns               #-}
 
 -- |
 -- Module      : Credentials.DynamoDB
@@ -17,11 +17,7 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.DynamoDB
-    ( DynamoDB
-    , Ref (DynamoTable)
-    , defaultTable
-    ) where
+module Credentials.DynamoDB where
 
 import Control.Exception.Lens
 import Control.Lens           hiding (Context)
@@ -34,7 +30,7 @@ import Credentials.DynamoDB.Item
 import Credentials.KMS           as KMS
 import Credentials.Types
 
-import Crypto.Hash
+import Crypto.Hash   (Digest, SHA1)
 import Crypto.Random (MonadRandom (..))
 
 import Data.ByteArray.Encoding
@@ -52,64 +48,56 @@ import Network.AWS
 import Network.AWS.Data
 import Network.AWS.DynamoDB
 
+import qualified Crypto.Hash         as Crypto
 import qualified Data.ByteString     as BS
 import qualified Data.Conduit        as C
 import qualified Data.Conduit.List   as CL
 import qualified Data.HashMap.Strict as Map
 import qualified Data.List.NonEmpty  as NE
 
-newtype DynamoDB a = DynamoDB { runDynamo :: AWS a }
-    deriving
-        ( Functor
-        , Applicative
-        , Monad
-        , MonadIO
-        , MonadThrow
-        , MonadCatch
-        , MonadMask
-        )
+newtype DynamoTable = DynamoTable { tableName :: Text }
+    deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
-instance MonadAWS DynamoDB where
-    liftAWS = DynamoDB
+defaultTable :: DynamoTable
+defaultTable = DynamoTable "default"
 
-instance MonadRandom DynamoDB where
-    getRandomBytes = liftIO . getRandomBytes
+insert :: (MonadMask m, MonadRandom m, MonadAWS m, Typeable m)
+       => KeyId
+       -> Context
+       -> Name
+       -> ByteString
+       -> DynamoTable
+       -> m Revision
+insert key ctx name plaintext table = do
+    ciphertext <- encrypt key ctx name plaintext
+    catchResourceNotFound table (insertEncrypted' name ciphertext table)
 
-instance Storage DynamoDB where
-    type Layer DynamoDB = AWS
-    type In    DynamoDB = ByteString
-    type Out   DynamoDB = ByteString
+select :: MonadAWS m
+       => Context
+       -> Name
+       -> Maybe Revision
+       -> DynamoTable
+       -> m (ByteString, Revision)
+select ctx name rev table = do
+    (_, (ciphertext, rev')) <-
+        catchResourceNotFound table (selectEncrypted' name rev table)
+    (,rev') <$> decrypt ctx name ciphertext
 
-    newtype Ref DynamoDB = DynamoTable Text
-        deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
+delete :: MonadAWS m
+       => Name
+       -> Maybe Revision
+       -> DynamoTable
+       -> m ()
+delete name rev table = catchResourceNotFound table (delete' name rev table)
 
-    layer        = runDynamo
-    setup        = setup'
-    teardown     = teardown'
-    revisions  r = safe r (revisions'  r)
-    delete n v r = safe r (delete' n v r)
+revisions :: MonadAWS m
+          => DynamoTable
+          -> Source m (Name, NonEmpty Revision)
+revisions table = catchResourceNotFound table (revisions' table)
 
-    insert k c n v r = do
-        x <- encrypt k c n v
-        safe r (insert' n x r)
-
-    select c n v r = do
-        (_, (x, y)) <- safe r (select' n v r)
-        (,y) <$> decrypt c n x
-
-defaultTable :: Ref DynamoDB
-defaultTable = DynamoTable "credentials"
-
--- FIXME:
--- This is a bit over specified due to the coarseness of _ResourceNotFound.
-safe :: (ToText a, MonadCatch m) => a -> m b -> m b
-safe t = handling_ _ResourceNotFoundException (throwM err)
-  where
-    err = StorageMissing ("Table " <> toText t <> " doesn't exist.")
-
-setup' :: MonadAWS m => Ref DynamoDB -> m Setup
-setup' t@(toText -> t') = do
-    p <- exists t
+setup :: MonadAWS m => DynamoTable -> m Setup
+setup table@DynamoTable{..} = do
+    p <- exists table
     unless p $ do
         let iops = provisionedThroughput 1 1
             keys = keySchemaElement nameField    Hash
@@ -125,44 +113,52 @@ setup' t@(toText -> t') = do
                         :| [keySchemaElement revisionField Range])
                     (projection & pProjectionType ?~ All)
                 ]
-        void $ send (createTable t' keys iops & attr & secn)
-        void $ await tableExists (describeTable t')
-    pure $ if p then Exists else Created
+        void $ send (createTable tableName keys iops & attr & secn)
+        void $ await tableExists (describeTable tableName)
+    pure $
+       if p
+           then Exists
+           else Created
 
-teardown' :: MonadAWS m => Ref DynamoDB -> m ()
-teardown' t@(toText -> t') = do
-    p <- exists t
+teardown :: MonadAWS m => DynamoTable -> m ()
+teardown table@DynamoTable{..} = do
+    p <- exists table
     when p $ do
-        void $ send (deleteTable t')
-        void $ await tableNotExists (describeTable t')
+        void $ send (deleteTable tableName)
+        void $ await tableNotExists (describeTable tableName)
 
-revisions' :: (MonadCatch m, MonadAWS m)
-           => Ref DynamoDB
+revisions' :: MonadAWS m
+           => DynamoTable
            -> Source m (Name, NonEmpty Revision)
-revisions' t = paginate (mkScan t)
+revisions' table =
+        paginate (scanTable table)
     =$= CL.concatMapM (traverse decode . view srsItems)
     =$= CL.groupOn1 fst
     =$= CL.map group
   where
-    group ((k, r), rs) = (k, desc (r :| map snd rs))
+    group ((name, rev), revs) =
+        ( name
+        , desc (rev :| map snd revs)
+        )
 
     desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
     desc = NE.map snd . NE.sortWith (Down . fst)
 
-insert' :: forall m. (MonadIO m, MonadMask m, MonadAWS m, Typeable m)
-        => Name
-        -> Encrypted
-        -> Ref DynamoDB
-        -> m Revision
-insert' n s t = recovering policy [const cond] write
+insertEncrypted' :: (MonadMask m, MonadAWS m, Typeable m)
+                 => Name
+                 -> Encrypted
+                 -> DynamoTable
+                 -> m Revision
+insertEncrypted' name encrypted table@DynamoTable{..} =
+    recovering policy [const cond] write
   where
     write = const $ do
-        v <- maybe 1 (+1) <$> latest n t
-        r <- mkRevision v
-        void . send $ putItem (toText t)
-            & piItem     .~ encode n <> encode v <> encode r <> encode s
-            & piExpected .~ Map.map (const expect) (encode v <> encode r)
-        pure r
+        ver <- maybe 1 (+1) <$> latest name table
+        rev <- genRevision ver
+        void . send $ putItem tableName
+            & piItem     .~ encode name <> encode ver <> encode rev <> encode encrypted
+            & piExpected .~ Map.map (const expect) (encode ver <> encode rev)
+        pure rev
 
     cond = handler_ _ConditionalCheckFailedException (pure True)
 
@@ -170,15 +166,17 @@ insert' n s t = recovering policy [const cond] write
 
     policy = constantDelay 1000 <> limitRetries 5
 
-select' :: (MonadThrow m, MonadAWS m)
-        => Name
-        -> Maybe Revision
-        -> Ref DynamoDB
-        -> m (Version, (Encrypted, Revision))
-select' n mr t = send (mkNamed n t & revision mr) >>= result
+selectEncrypted' :: (MonadThrow m, MonadAWS m)
+                 => Name
+                 -> Maybe Revision
+                 -> DynamoTable
+                 -> m (Version, (Encrypted, Revision))
+selectEncrypted' name rev table@DynamoTable{..} =
+    send (queryName name table & revision rev) >>= result
   where
-    result  = maybe missing decode . listToMaybe . view qrsItems
-    missing = throwM $ SecretMissing n mr (toText t)
+    result = maybe missing decode . listToMaybe . view qrsItems
+
+    missing = throwM $ SecretMissing name rev tableName
 
     -- If revision is specified, the revisionIndex is used and
     -- a consistent read is done.
@@ -190,24 +188,27 @@ select' n mr t = send (mkNamed n t & revision mr) >>= result
 
 -- FIXME: revisit.
 delete' :: MonadAWS m
-        => Name
-        -> Maybe Revision
-        -> Ref DynamoDB
-        -> m ()
-delete' n r t = case r of
-    Just x  -> do
-        (v, _) <- select' n (Just x) t
-        void . send $ deleteItem (toText t) & diKey .~ encode n <> encode v
-    Nothing -> paginate qry $$ CL.mapM_ (del . view qrsItems)
+       => Name
+       -> Maybe Revision
+       -> DynamoTable
+       -> m ()
+delete' name rev table@DynamoTable{..} =
+    maybe deleteAll deleteOne rev
   where
-    qry = mkNamed n t
+    deleteOne r = do
+        (ver, _) <- selectEncrypted' name (Just r) table
+        void . send $ deleteItem tableName & diKey .~ encode name <> encode ver
+
+    deleteAll = paginate qry $$ CL.mapM_ (del . view qrsItems)
+
+    qry = queryName name table
         & qAttributesToGet  ?~ nameField :| [versionField]
         & qScanIndexForward ?~ True
         & qLimit            ?~ 25
 
     del []     = pure ()
     del (x:ys) = void . send $ batchWriteItem
-        & bwiRequestItems .~ [(toText t, f x :| map f xs)]
+        & bwiRequestItems .~ [(tableName, f x :| map f xs)]
       where
         f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
 
@@ -218,34 +219,36 @@ delete' n r t = case r of
 
 latest :: (MonadThrow m, MonadAWS m)
        => Name
-       -> Ref DynamoDB
+       -> DynamoTable
        -> m (Maybe Version)
-latest n t = do
-    rs <- send (mkNamed n t & qConsistentRead ?~ True)
+latest name table = do
+    rs <- send (queryName name table & qConsistentRead ?~ True)
     case listToMaybe (rs ^. qrsItems) of
         Nothing -> pure Nothing
         Just  m -> Just <$> decode m
 
-exists :: MonadAWS m => Ref DynamoDB -> m Bool
-exists t = paginate listTables
+exists :: MonadAWS m => DynamoTable -> m Bool
+exists DynamoTable{..} = paginate listTables
     =$= CL.concatMap (view ltrsTableNames)
-     $$ (isJust <$> findC (== toText t))
+     $$ (isJust <$> findC (== tableName))
 
-mkScan :: Ref DynamoDB -> Scan
-mkScan t = scan (toText t)
-    & sAttributesToGet ?~ nameField :| [versionField, revisionField]
+scanTable :: DynamoTable -> Scan
+scanTable DynamoTable{..} =
+    scan tableName
+        & sAttributesToGet ?~ nameField :| [versionField, revisionField]
 
-mkNamed :: Name -> Ref DynamoDB -> Query
-mkNamed n t = query (toText t)
-    & qLimit            ?~ 1
-    & qScanIndexForward ?~ False
-    & qConsistentRead   ?~ False
-    & qKeyConditions    .~ equals n
+queryName :: Name -> DynamoTable -> Query
+queryName name DynamoTable{..} =
+    query tableName
+        & qLimit            ?~ 1
+        & qScanIndexForward ?~ False
+        & qConsistentRead   ?~ False
+        & qKeyConditions    .~ equals name
 
-mkRevision :: MonadIO m => Version -> m Revision
-mkRevision v = do
+genRevision :: MonadIO m => Version -> m Revision
+genRevision ver = do
     ts <- liftIO getPOSIXTime
-    let d = hash (toBS (show ts) <> toBS v) :: Digest SHA1
+    let d = Crypto.hash (toBS (show ts) <> toBS ver) :: Digest SHA1
         r = BS.take 7 (convertToBase Base16 d)
     pure $! Revision r
 
@@ -256,3 +259,12 @@ findC f = loop
 
     go x | f x       = pure (Just x)
          | otherwise = loop
+
+-- FIXME: Over specified due to the coarseness of _ResourceNotFound.
+--
+-- | The prime function variants ('select' vs 'select\'') don't handle the
+-- 'ResourceNotFound' exception that is thrown when the table doesn't exist.
+catchResourceNotFound :: MonadCatch m => DynamoTable -> m b -> m b
+catchResourceNotFound DynamoTable{..} =
+    handling_ _ResourceNotFoundException $
+        throwM $ StorageMissing ("Table " <> tableName <> " doesn't exist.")

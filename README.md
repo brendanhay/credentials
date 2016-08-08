@@ -23,13 +23,13 @@ in development and not intended for public consumption, caveat emptor!
 
 The `credentials` library and CLI provides a unified interface for managing secure, shared credentials.
 
-It uses Amazon Key Management Service (KMS) for master key management, locally
+It uses [Key Management Service (KMS)](http://aws.amazon.com/kms/) for master key management, locally
 encrypts and decrypts secrets, which are then stored in any of the supported
-storage backends. (Currently DynamoDB.)
+storage backends. (Currently [DynamoDB](http://aws.amazon.com/dynamodb/).)
 
 The use-case is to avoid storing sensitive information such as passwords and
 connection strings in plaintext in places such as source control or on
-developers' machines. Instead you can securely administer and distribute
+developer machines. Instead you can securely administer and distribute
 secrets, leveraging Amazon's IAM policies for access control and permissions to
 ensure limited read-only permissions from production/deployed hosts where applicable.
 

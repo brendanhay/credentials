@@ -13,13 +13,16 @@
 --
 module Credentials
     (
-    -- * Storage Interface
-      Storage  (..)
-
-    -- ** DynamoDB
-    , DynamoDB
-    , Ref (DynamoTable)
+    -- * Default Storage Backend
+      DynamoTable (..)
     , defaultTable
+
+    , insert
+    , select
+    , delete
+    , revisions
+    , setup
+    , teardown
 
     -- * Re-exported Types
     , module Credentials.Types
