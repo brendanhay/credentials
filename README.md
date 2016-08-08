@@ -36,9 +36,8 @@ ensure limited read-only permissions from production/deployed hosts where applic
 
 Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
 
-If Haskell is not your thing, check out
-[credstash](https://github.com/fugue/credstash), the project that inspired
-`credentials`.
+If Haskell is not your thing, check out [credstash](https://github.com/fugue/credstash),
+the Python project that inspired `credentials`.
 
 
 ## Setup
