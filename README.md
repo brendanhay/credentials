@@ -88,6 +88,58 @@ dynamo://dynamodb.eu-central-1.amazonaws.com:443/credentials:
 Additional means of formatting the output and logging suitable for use in shell scripts is
 available, see the `--help` text for more information.
 
+The following is an example of using the `credentials` library as a dependency
+of your Haskell project. It retrieves a database connection string containing a
+sensitive password, when a webserver starts. It's worth pointing out the setup
+all pertains to the underlying
+[amazonka](https://github.com/brendanhay/credentials) library, since all of
+the `credentials` operations run in a `MonadAWS` context.
+
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+
+import Control.Lens
+
+import Credentials
+
+import Data.ByteString (ByteString)
+
+import Network.AWS
+import Network.Wai              (Application)
+import Network.Wai.Handler.Warp (run)
+
+import System.IO (stdout)
+
+main :: IO
+main = do
+    -- A new 'Logger' to replace the default noop logger is created,
+    -- which will print AWS debug information and errors to stdout.
+    lgr <- newLogger Debug stdout
+
+    -- A new amazonka 'Env' is created, which auto-discovers the
+    -- underlying host credentials.
+    env <- newEnv Frankfurt Discover
+
+    let table = Credentials.defaultTable
+        key   = Credentials.defaultKeyId
+        name  = "secret-database-uri"
+
+    -- We now run the 'AWS' computation with the overriden logger,
+    -- performing sequence credentials operation(s).
+    -- For 'select', the plaintext and corresponding revision is returned.
+    (uri, _) <- runResourceT . runAWS (env & envLogger .~ lgr) $ do
+        -- Selecting the credential by name, and specifying 'Nothing' for the
+        -- revision results in the latest revision of the credential.
+        Credentials.select mempty name Nothing table
+
+    -- We can now connect to the database using our sensitive connection URI.
+    run 3000 (app uri)
+
+app :: ByteString -> Application
+app uri rq f = ...
+```
+
+
 ### Credential Storage
 
 ### Credential Retrieval
