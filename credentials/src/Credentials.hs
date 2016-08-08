@@ -50,16 +50,16 @@ running them is identical to that of [amazonka](https://hackage.haskell.org/pack
 @
 {-# LANGUAGE OverloadedStrings #-}
 
-import Data.ByteString (ByteString)
 import Credentials
 import Control.Lens
+import Data.ByteString (ByteString)
 import Network.AWS
 import System.IO
 
 example :: IO (ByteString, Revision)
 example = do
-    -- A new 'Logger' to replace the default noop logger is created, which will
-    -- print AWS debug information and errors to stdout.
+    -- A new 'Logger' to replace the default noop logger is created,
+    -- which will print AWS debug information and errors to stdout.
     lgr <- newLogger Debug stdout
 
     -- A new amazonka 'Env' is created, which auto-discovers the
