@@ -14,20 +14,31 @@
 -- $usage
 module Credentials
     (
-    -- * Default Storage Backend
-      DynamoTable (..)
+    -- * Types
+      Name              (..)
+    , Revision          (..)
+    , Context           (..)
+    , Setup             (..)
+
+    -- * Errors
+    , CredentialError   (..)
+    , AsCredentialError (..)
+
+    -- * KMS Key
+    , KeyId             (..)
+    , defaultKeyId
+
+    -- * DynamoDB Table
+    , DynamoTable       (..)
     , defaultTable
 
-    -- * Storage Operations
+    -- * Operations
     , insert
     , select
     , delete
     , revisions
     , setup
     , teardown
-
-    -- * Re-exported Types
-    , module Credentials.Types
     ) where
 
 import Credentials.DynamoDB
