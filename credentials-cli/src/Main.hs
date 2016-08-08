@@ -18,6 +18,8 @@
 --
 module Main (main) where
 
+import Prelude hiding (truncate)
+
 import Control.Exception.Lens
 import Control.Lens                 ((.~), (<&>))
 import Control.Monad.Catch

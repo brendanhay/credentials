@@ -35,6 +35,8 @@ module Credentials.DynamoDB
     , revisions
     ) where
 
+import Prelude hiding (truncate)
+
 import Control.Exception.Lens
 import Control.Lens           hiding (Context)
 import Control.Monad
@@ -128,26 +130,35 @@ truncate :: MonadAWS m
          => Name        -- ^ The credential name.
          -> DynamoTable -- ^ The DynamoDB table.
          -> m ()
-truncate name rev table@DynamoTable{..} =
-    catchResourceNotFound table (qry $$ CL.mapM_ (del . view qrsItems))
+truncate name table@DynamoTable{..} = catchResourceNotFound table $
+    queryAll $$ CL.mapM_ (deleteMany . view qrsItems)
   where
-    qry = paginate
-        ( queryByName name table
-        & qAttributesToGet  ?~ nameField :| [versionField]
-        & qScanIndexForward ?~ True
-        & qLimit            ?~ 50
-        )
+    queryAll =
+        paginate $
+              queryByName name table
+            & qAttributesToGet  ?~ nameField :| [versionField]
+            & qScanIndexForward ?~ True
+            & qLimit            ?~ batchSize
 
-    del []     = pure ()
-    del (x:ys) = void . send $ batchWriteItem
-        & bwiRequestItems .~ [(tableName, f x :| map f xs)]
+    deleteMany []     = pure ()
+    deleteMany (x:xs) = void . send $
+        batchWriteItem
+            & bwiRequestItems .~
+                [ (tableName, deleteItem x :| map deleteItem (batchInit xs))
+                ]
+
+    deleteItem k =
+        writeRequest
+            & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
+
+    batchInit xs
+        | i < n     = take (i - 1) xs
+        | otherwise = xs
       where
-        f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
+        n = fromIntegral (batchSize - 1)
+        i = length xs
 
-        xs | i < 49    = take (i - 1) ys
-           | otherwise = ys
-          where
-            i = length ys
+    batchSize = 50
 
 -- | Scan the entire credential database, grouping pages of results into
 -- unique credential names and their corresponding revisions.
@@ -166,6 +177,9 @@ revisions table = catchResourceNotFound table $
     desc = NE.map snd . NE.sortWith (Down . fst)
 
 -- | Create the credentials database table.
+--
+-- The returned idempotency flag can be used to notify configuration
+-- management tools such as ansible whether about system state.
 setup :: MonadAWS m
       => DynamoTable -- ^ The DynamoDB table.
       -> m Setup
