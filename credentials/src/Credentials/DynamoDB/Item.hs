@@ -63,8 +63,19 @@ import qualified Data.HashMap.Strict as Map
 import qualified Data.Text           as Text
 
 -- | The DynamoDB field used for optimistic locking.
+--
+-- The 'ToText' and 'FromText' instances handle left-padding to support
+-- consistent lexicographic ordering when used as a range in DynamoDB.
 newtype Version = Version Integer
-    deriving (Eq, Ord, Num, FromText, ToText, ToByteString)
+    deriving (Eq, Ord, Num, FromText)
+
+instance ToText Version where
+    toText (Version n) =
+        let x = toText n
+         in Text.drop (Text.length x) padding <> x
+
+padding :: Text
+padding = Text.replicate 19 "0"
 
 equals :: Item a => a -> HashMap Text Condition
 equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . encode

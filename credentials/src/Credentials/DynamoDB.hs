@@ -258,7 +258,7 @@ queryByName name DynamoTable{..} =
         & qKeyConditions    .~ equals name
 
 genRevision :: MonadIO m => Version -> m Revision
-genRevision ver = do
+genRevision (Version ver) = do
     ts <- liftIO getPOSIXTime
     let d = Crypto.hash (toBS (show ts) <> toBS ver) :: Digest SHA1
         r = BS.take 7 (convertToBase Base16 d)
