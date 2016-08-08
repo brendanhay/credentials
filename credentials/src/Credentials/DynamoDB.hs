@@ -17,6 +17,11 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
+-- Provides the implementation for storage and retrieval of encrypted credentials
+-- in DynamoDB. The encryption and decryption is handled by "Credentials.KMS".
+--
+-- The prime function variants in this module denote that no check for the
+-- existence of the underlying storage table is performed.
 module Credentials.DynamoDB where
 
 import Control.Exception.Lens
@@ -58,7 +63,7 @@ import qualified Data.List.NonEmpty  as NE
 newtype DynamoTable = DynamoTable { tableName :: Text }
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
--- |
+-- | The default DynamoDB table used to store credentials.
 defaultTable :: DynamoTable
 defaultTable = DynamoTable "credentials"
 

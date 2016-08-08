@@ -41,8 +41,9 @@ Please see the [introductory blog post](http://brendanhay.nz/credentials) for mo
 1. `stack install credentials-cli`
 2. Create a new key in KMS called "credentials". You can do this under Identity
    and Access Management > Encryption Keys in the AWS developer console.
-3. Make your AWS access credentials available where [amazonka](https://github.com/brendanhay/amazonka) can read them.
-   Typically in the `~/.aws/credentials` file, or as `AWS_ACCESS_KEY_ID` and
+3. Make your AWS access credentials available where
+   [amazonka](https://github.com/brendanhay/amazonka) can find them. Typically
+   in the `~/.aws/credentials` file, or as `AWS_ACCESS_KEY_ID` and
    `AWS_SECRET_ACCESS_KEY` environment variables.
 4. `credentials setup`
 

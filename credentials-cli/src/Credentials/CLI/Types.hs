@@ -21,7 +21,6 @@ module Credentials.CLI.Types where
 
 import Control.Monad.Base
 import Control.Monad.Catch
-import Control.Monad.Morph          (hoist)
 import Control.Monad.Reader
 import Control.Monad.Trans.Resource
 
@@ -33,7 +32,6 @@ import Crypto.Random (MonadRandom (..))
 import Data.ByteString         (ByteString)
 import Data.ByteString.Builder (Builder)
 import Data.Conduit
-import Data.Conduit.Lazy
 import Data.Data
 import Data.List               (sort)
 import Data.Text               (Text)
@@ -127,9 +125,6 @@ instance MonadRandom App where
 
 runApp :: Env -> Options -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
-
-runLazy :: Source App a -> App [a]
-runLazy = App . lazyConsume . hoist unApp
 
 data Store = Table URI DynamoTable
 

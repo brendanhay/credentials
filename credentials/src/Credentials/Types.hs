@@ -41,6 +41,7 @@ newtype Nonce = Nonce ByteString
 newtype KeyId = KeyId Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
+-- | The default KMS master key alias.
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credentials"
 
