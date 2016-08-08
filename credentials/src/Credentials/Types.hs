@@ -49,18 +49,21 @@ defaultKeyId = KeyId "alias/credentials"
 newtype Name = Name Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
--- | An opaque (non-monotonic, potential gaps) revision number.
+-- | An opaque, non-monotonic revision number.
 newtype Revision = Revision ByteString
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 -- | A KMS encryption context.
+--
+-- /See:/ KMS <http://docs.aws.amazon.com/kms/latest/developerguide/encrypt-context.html Encryption Context>
+-- documentation for more information.
 newtype Context = Context { fromContext :: HashMap Text Text }
     deriving (Eq, Show, Monoid)
 
 blankContext :: Context -> Bool
 blankContext = Map.null . fromContext
 
--- | HMAC SHA256, possibly hex-encoded.
+-- | HMAC SHA256 digest, which can possibly be hex-encoded.
 data HMAC256
     = Hex    !ByteString
     | Digest !(HMAC SHA256)

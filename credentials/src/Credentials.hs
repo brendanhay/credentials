@@ -15,15 +15,13 @@ module Credentials
     (
     -- $usage
 
-    -- * Types
-      Name              (..)
-    , Revision          (..)
-    , Context           (..)
-    , Setup             (..)
-
-    -- * Errors
-    , CredentialError   (..)
-    , AsCredentialError (..)
+    -- * Operations
+      insert
+    , select
+    , delete
+    , revisions
+    , setup
+    , teardown
 
     -- * KMS Key
     , KeyId             (..)
@@ -33,20 +31,22 @@ module Credentials
     , DynamoTable       (..)
     , defaultTable
 
-    -- * Operations
-    , insert
-    , select
-    , delete
-    , revisions
-    , setup
-    , teardown
+    -- * Errors
+    , CredentialError   (..)
+    , AsCredentialError (..)
+
+    -- * Types
+    , Name              (..)
+    , Revision          (..)
+    , Context           (..)
+    , Setup             (..)
     ) where
 
 import Credentials.DynamoDB
 import Credentials.Types
 
 {- $usage
-Basic usage requires that you have the following prerequisites met:
+To use the library, make sure you have met the following prerequisites:
 
 * You have a master key in KMS. You can create this under Identity and Access
   Management > Encryption Keys, in the AWS developer console.
@@ -57,7 +57,8 @@ Basic usage requires that you have the following prerequisites met:
   `AWS_SECRET_ACCESS_KEY` environment variables.
 
 Since all of the credentials operations are within a 'MonadAWS' context,
-running them is identical to that of [amazonka](https://hackage.haskell.org/package/amazonka).
+running them is identical to that of [amazonka](https://hackage.haskell.org/package/amazonka),
+which you will also need to add to your `build-depends` section of your project's cabal file.
 
 @
 {-# LANGUAGE OverloadedStrings #-}
@@ -96,7 +97,7 @@ example = do
         _ <- Credentials.insert key mempty name "a-super-secret-value" table
 
         -- Selecting the credential by name, and specifying 'Nothing' for the
-p        -- revision results in the latest credential revision being returned.
+        -- revision results in the latest credential revision being returned.
         Credentials.select mempty name Nothing table
 @
 
