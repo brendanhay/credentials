@@ -13,8 +13,8 @@
     - [IAM Policies](#iam-policies)
 * [Security Considerations](#security-considerations)
 * [Service Pricing](#service-pricing)
-* [Contribute](#contribute)
 * [Local Development](#local-development)
+* [Contribute](#contribute)
 * [Licence](#licence)
 
 
@@ -36,8 +36,8 @@ secrets, leveraging Amazon's IAM policies for access control and permissions to
 ensure limited read-only permissions from production/deployed hosts where applicable.
 
 Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information,
-or Haddock documentation which is built by CI from the `develop` branch
-can be found [here](http://brendanhay.nz/credentials-doc).
+or the Haddock documentation built by CI from the `develop` branch,
+which can be found [here](http://brendanhay.nz/credentials-doc/credentials/).
 
 If Haskell is not your thing, check out [credstash](https://github.com/fugue/credstash),
 the Python project that inspired `credentials`.
@@ -52,7 +52,7 @@ the Python project that inspired `credentials`.
    [amazonka](https://hackage.haskell.org/package/amazonka) can find them. This
    will be automatic if you are running on an EC2 host, otherwise the
    [~/.aws/credentials](https://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
-   file, as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment
+   file or `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment
    variables need to be configured.
 4. `credentials setup`
 

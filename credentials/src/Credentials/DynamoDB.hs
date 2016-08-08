@@ -22,17 +22,19 @@
 --
 -- See the "Credentials" module for usage information.
 module Credentials.DynamoDB
-    ( DynamoTable (..)
+    (
+    -- * Table
+      DynamoTable (..)
     , defaultTable
 
     -- * Operations
-    , setup
-    , teardown
     , insert
     , select
     , delete
     , truncate
     , revisions
+    , setup
+    , teardown
     ) where
 
 import Prelude hiding (truncate)
@@ -122,7 +124,7 @@ delete name rev table@DynamoTable{..} =
         (ver, _) <- selectEncrypted name (Just rev) table
         void . send $
             deleteItem tableName
-                & diKey .~ encode name <> encode ver
+                & diKey .~ toItem name <> toItem ver
 
 -- | Truncate all of a credential's revisions, so that only
 -- the latest revision remains.
@@ -167,7 +169,7 @@ revisions :: MonadAWS m
           -> Source m (Name, NonEmpty Revision)
 revisions table = catchResourceNotFound table $
         paginate (scanTable table)
-    =$= CL.concatMapM (traverse decode . view srsItems)
+    =$= CL.concatMapM (traverse fromItem . view srsItems)
     =$= CL.groupOn1 fst
     =$= CL.map group
   where
@@ -191,11 +193,11 @@ setup table@DynamoTable{..} = do
                :| [keySchemaElement versionField Range]
             attr = ctAttributeDefinitions .~
                 [ attributeDefinition nameField     S
-                , attributeDefinition versionField  N
+                , attributeDefinition versionField  S
                 , attributeDefinition revisionField B
                 ]
             secn = ctLocalSecondaryIndexes .~
-                [ localSecondaryIndex revisionIndex
+                [ localSecondaryIndex revisionField
                     (keySchemaElement nameField Hash
                         :| [keySchemaElement revisionField Range])
                     (projection & pProjectionType ?~ All)
@@ -230,8 +232,12 @@ insertEncrypted name encrypted table@DynamoTable{..} =
         ver <- maybe 1 (+1) <$> latest name table
         rev <- genRevision ver
         void . send $ putItem tableName
-            & piItem     .~ encode name <> encode ver <> encode rev <> encode encrypted
-            & piExpected .~ Map.map (const expect) (encode ver <> encode rev)
+            & piExpected .~ Map.map (const expect) (toItem ver <> toItem rev)
+            & piItem     .~
+                   toItem name
+                <> toItem ver
+                <> toItem rev
+                <> toItem encrypted
         pure rev
 
     cond = handler_ _ConditionalCheckFailedException (pure True)
@@ -248,15 +254,15 @@ selectEncrypted :: (MonadThrow m, MonadAWS m)
 selectEncrypted name rev table@DynamoTable{..} =
     send (queryByName name table & revision rev) >>= result
   where
-    result = maybe missing decode . listToMaybe . view qrsItems
+    result = maybe missing fromItem . listToMaybe . view qrsItems
 
     missing = throwM $ SecretMissing name rev tableName
 
-    -- If revision is specified, the revisionIndex is used and
+    -- If revision is specified, the revision index is used and
     -- a consistent read is done.
     revision Nothing  = id
     revision (Just r) =
-          (qIndexName      ?~ revisionIndex)
+          (qIndexName      ?~ revisionField)
         . (qKeyConditions  <>~ equals r)
         . (qConsistentRead ?~ True)
 
@@ -268,7 +274,7 @@ latest name table = do
     rs <- send (queryByName name table & qConsistentRead ?~ True)
     case listToMaybe (rs ^. qrsItems) of
         Nothing -> pure Nothing
-        Just  m -> Just <$> decode m
+        Just  m -> Just <$> fromItem m
 
 exists :: MonadAWS m => DynamoTable -> m Bool
 exists DynamoTable{..} = paginate listTables

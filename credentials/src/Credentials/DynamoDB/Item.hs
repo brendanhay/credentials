@@ -1,13 +1,8 @@
-{-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
 
 -- |
 -- Module      : Credentials.DynamoDB.Item
@@ -18,175 +13,157 @@
 -- Portability : non-portable (GHC extensions)
 --
 -- This module contains the schema that is used by "Credentials.DynamoDB" to
--- serialise columns to DynamoDB items.
-module Credentials.DynamoDB.Item
-    (
-    -- * Versioning
-     Version (..)
+-- serialise encryption parameters to DynamoDB items.
+module Credentials.DynamoDB.Item where
 
-    -- * Serialisation
-    , Item (..)
-    , Attr (..)
-    , fromAttr
-    , toAttr
-
-    -- * Query Conditions
-    , equals
-
-    -- * Index Names
-    , revisionIndex
-
-    -- * Field Names
-    , revisionField
-    , nameField
-    , versionField
-    ) where
-
-import Control.Lens        (Lens', Prism')
-import Control.Lens        (iso, lens, preview, prism', review, view)
-import Control.Lens        ((&), (.~), (?~), (^.))
+import Control.Lens        (set, view, (&), (.~))
+import Control.Monad       ((>=>))
 import Control.Monad.Catch (MonadThrow (..))
 
 import Credentials.Types
 
-import Data.ByteString     (ByteString)
-import Data.HashMap.Strict (HashMap)
-import Data.Maybe          (fromMaybe, mapMaybe)
-import Data.Monoid         ((<>))
-import Data.Proxy          (Proxy (..))
-import Data.Text           (Text)
+import Crypto.Cipher.Types (BlockCipher, IV, makeIV)
+import Crypto.Hash         (SHA256, digestFromByteString)
+import Crypto.MAC.HMAC     (HMAC (..))
+
+import Data.Bifunctor          (bimap)
+import Data.ByteArray          (convert)
+import Data.ByteArray.Encoding (Base (Base16), convertFromBase, convertToBase)
+import Data.ByteString         (ByteString)
+import Data.HashMap.Strict     (HashMap)
+import Data.Monoid             ((<>))
+import Data.Text               (Text)
 
 import Network.AWS.Data
 import Network.AWS.DynamoDB
 
 import qualified Data.HashMap.Strict as Map
 import qualified Data.Text           as Text
-
--- | The DynamoDB field used for optimistic locking.
---
--- The 'ToText' and 'FromText' instances handle left-padding to support
--- consistent lexicographic ordering when used as a range in DynamoDB.
-newtype Version = Version Integer
-    deriving (Eq, Ord, Num, FromText)
-
-instance ToText Version where
-    toText (Version n) =
-        let x = toText n
-         in Text.drop (Text.length x) padding <> x
+import qualified Data.Text.Encoding  as Text
 
 padding :: Text
 padding = Text.replicate 19 "0"
 
+-- | The DynamoDB field used for optimistic locking.
+--
+-- Serialisation of 'Version' handles left-padding to support
+-- consistent lexicographic ordering when used as a range in DynamoDB.
+newtype Version = Version Integer
+    deriving (Eq, Ord, Num, FromText, ToText)
+
 equals :: Item a => a -> HashMap Text Condition
-equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . encode
+equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toItem
 
-revisionIndex :: Text
-revisionIndex = revisionField
-
-nameField, revisionField, versionField :: Text
-nameField     = name (Proxy :: Proxy Name)
-revisionField = name (Proxy :: Proxy Revision)
-versionField  = name (Proxy :: Proxy Version)
+nameField, revisionField, versionField, ivField, wrappedKeyField,
+ ciphertextField, digestField :: Text
+nameField       = "name"
+revisionField   = "revision"
+versionField    = "version"
+ivField         = "iv"
+wrappedKeyField = "key"
+ciphertextField = "contents"
+digestField     = "hmac"
 
 class Item a where
-    encode :: a -> HashMap Text AttributeValue
-    decode :: MonadThrow m => HashMap Text AttributeValue -> m a
+    -- | Encode an item as a set of attributes including their schema.
+    toItem :: a -> HashMap Text AttributeValue
 
-    default encode :: Attr a b => a -> HashMap Text AttributeValue
-    encode = toAttr
+    -- | Decode an item from a set of attributes.
+    parseItem :: HashMap Text AttributeValue -> Either CredentialError a
 
-    default decode :: (MonadThrow m, Monoid b, ToText b, Attr a b)
-                   => HashMap Text AttributeValue
-                   -> m a
-    decode = fromAttr
+-- | Decode an item by throwing a 'CredentialError' exception when an
+-- error is encountered.
+fromItem :: (MonadThrow m, Item a) => HashMap Text AttributeValue -> m a
+fromItem = either throwM pure . parseItem
 
 instance (Item a, Item b) => Item (a, b) where
-    encode (x, y) = encode x <> encode y
-    decode m      = (,) <$> decode m <*> decode m
+    toItem (x, y) = toItem x <> toItem y
+    parseItem   m = (,) <$> parseItem m <*> parseItem m
+
+instance Item Name where
+    toItem    = Map.singleton nameField . toAttr
+    parseItem = parse nameField
+
+instance Item Revision where
+    toItem    = Map.singleton revisionField . toAttr
+    parseItem = parse revisionField
+
+instance Item Version where
+    toItem    = Map.singleton versionField . toAttr
+    parseItem = parse versionField
 
 instance Item Encrypted where
-    encode (Encrypted n k h c) =
-            encode n
-         <> encode k
-         <> encode h
-         <> encode c
-    decode m = Encrypted
-        <$> decode m
-        <*> decode m
-        <*> decode m
-        <*> decode m
+    toItem Encrypted{..} =
+        Map.fromList
+            [ (ivField,         toAttr iv)
+            , (wrappedKeyField, toAttr wrappedKey)
+            , (ciphertextField, toAttr ciphertext)
+            , (digestField,     toAttr digest)
+            ]
 
-instance Item Name
-instance Item Version
-instance Item Revision
-instance Item Nonce
-instance Item Key
-instance Item Cipher
-instance Item HMAC256
+    parseItem m =
+        Encrypted
+            <$> parse ivField m
+            <*> parse wrappedKeyField m
+            <*> parse ciphertextField m
+            <*> parse digestField m
 
-data Meta a b = Meta Text (Lens' AttributeValue (Maybe b)) (Prism' b a)
+parse :: Attribute a
+      => Text
+      -> HashMap Text AttributeValue
+      -> Either CredentialError a
+parse k m =
+    case Map.lookup k m of
+        Nothing -> Left $ FieldMissing k (Map.keys m)
+        Just v  ->
+           case parseAttr v of
+               Nothing -> Left $ FieldInvalid k (show v)
+               Just x  -> Right x
 
-class Attr a b | a -> b where
-    meta :: Meta a b
+class Attribute a where
+    -- | Encode an attribute value.
+    toAttr :: a -> AttributeValue
 
-instance Attr Name Text where
-    meta = Meta "name" avS text
+    -- | Decode an attribute value.
+    parseAttr :: AttributeValue -> Maybe a
 
-instance Attr Version Text where
-    meta = Meta "version" avN text
+instance Attribute Text where
+    toAttr  t = set avS (Just t) attributeValue
+    parseAttr = view avS
 
-instance Attr Revision ByteString where
-    meta = Meta "revision" avB (iso Revision toBS)
+instance Attribute ByteString where
+    toAttr bs = set avB (Just bs) attributeValue
+    parseAttr = view avB
 
-instance Attr Key ByteString where
-    meta = Meta "key" avB (iso Key toBS)
+instance Attribute Name where
+    toAttr    = toAttr . toText
+    parseAttr = fmap Name . parseAttr
 
-instance Attr Cipher ByteString where
-    meta = Meta "contents" avB (iso Cipher toBS)
+instance Attribute Revision where
+    toAttr    = toAttr . toBS
+    parseAttr = fmap Revision . parseAttr
 
-instance Attr Nonce ByteString where
-    meta = Meta "iv" avB (iso Nonce toBS)
+instance Attribute Integer where
+    toAttr    = toAttr . toText
+    parseAttr = parseAttr >=> either (const Nothing) Just . fromText
 
-instance Attr HMAC256 ByteString where
-    meta = Meta "hmac" avB (iso Hex toBS)
+instance Attribute Version where
+    toAttr (Version n) =
+        let x = toText n
+            y = Text.drop (Text.length x) padding <> x
+         in toAttr y
+    parseAttr = fmap Version . parseAttr
 
-instance Attr Context (HashMap Text Text) where
-     meta = Meta "matdesc" (lens f g) (iso Context fromContext)
-       where
-         f = Just . Map.fromList . mapMaybe q . Map.toList . view avM
-           where
-             q (k, v) = (k,) <$> v ^. avS
+instance BlockCipher a => Attribute (IV a) where
+    toAttr   iv = toAttr (convert iv :: ByteString)
+    parseAttr v = do
+        bs :: ByteString <- parseAttr v
+        makeIV bs
 
-         g s x = s & avM .~ Map.map q (fromMaybe mempty x)
-           where
-             q a = attributeValue & avS ?~ a
-
-toAttr :: Attr a b => a -> HashMap Text AttributeValue
-toAttr x = [(k, attributeValue & l ?~ review p x)]
-  where
-    Meta k l p = meta
-
-fromAttr :: (MonadThrow m, Monoid b, ToText b, Attr a b)
-          => HashMap Text AttributeValue
-          -> m a
-fromAttr m = require >>= parse
-  where
-    Meta k l p = meta
-
-    require = maybe missing pure (Map.lookup k m)
-    parse x =
-        case view l x of
-            Nothing -> missing
-            Just y  -> maybe (invalid y) pure (preview p y)
-
-    missing = throwM (FieldMissing k (Map.keys m))
-    invalid = throwM . FieldInvalid k . toText
-
-name :: forall a b. Attr a b => Proxy a -> Text
-name _ = let (Meta k _ _) = meta :: Meta a b in k
-
-text :: (FromText a, ToText a) => Prism' Text a
-text = prism' toText go
-  where
-    go x | Text.null x = Nothing
-         | otherwise   = either (const Nothing) Just (fromText x)
+instance Attribute (HMAC SHA256) where
+    toAttr = toAttr . Text.decodeUtf8 . convertToBase Base16 . hmacGetDigest
+    parseAttr v = do
+        t :: Text <- parseAttr v
+        case convertFromBase Base16 (Text.encodeUtf8 t) of
+            Left  _  -> Nothing
+            Right bs -> HMAC <$> digestFromByteString (bs :: ByteString)

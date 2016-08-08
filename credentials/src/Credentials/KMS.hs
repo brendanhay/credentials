@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ViewPatterns        #-}
 
 -- |
 -- Module      : Credentials.KMS
@@ -31,12 +31,13 @@ import Credentials.Types
 import Crypto.Cipher.AES   (AES256)
 import Crypto.Cipher.Types (IV)
 import Crypto.Error
-import Crypto.MAC.HMAC     (hmac)
+import Crypto.MAC.HMAC     (HMAC (..), hmac)
 import Crypto.Random       (MonadRandom (..))
 
-import Data.ByteString (ByteString)
-import Data.Text       (Text)
-import Data.Typeable   (Typeable)
+import Data.ByteArray.Encoding (Base (Base16), convertToBase)
+import Data.ByteString         (ByteString)
+import Data.Text               (Text)
+import Data.Typeable           (Typeable)
 
 import Network.AWS
 import Network.AWS.Data
@@ -47,13 +48,15 @@ import Numeric.Natural (Natural)
 
 import qualified Crypto.Cipher.Types as Cipher
 import qualified Data.ByteString     as BS
+import qualified Data.HashMap.Strict as Map
 import qualified Data.Text           as Text
 import qualified Network.AWS.KMS     as KMS
 
 -- | Encrypt a plaintext 'ByteString' with the given master key and
 -- encryption context. The 'Name' is used to annotate error messages.
 --
--- The resulting IV, encrypted data key, ciphertext, and HMAC SHA256 are returned.
+-- The resulting IV, encrypted data key, ciphertext, and HMAC SHA256 are returned
+-- if no error occurs.
 encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         => KeyId
         -> Context
@@ -61,7 +64,6 @@ encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         -> ByteString
         -> m Encrypted
 encrypt key ctx name plaintext = do
-    -- Generate a key. First half for data encryption, last for HMAC.
     let rq = generateDataKey (toText key)
            & gdkNumberOfBytes     ?~ keyLength
            & gdkEncryptionContext .~ fromContext ctx
@@ -76,18 +78,14 @@ encrypt key ctx name plaintext = do
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
         failure            = EncryptFailure ctx name
 
-    nonce <- getRandomBytes nonceLength
-    iv    <- parseIV failure nonce
-    aes   <- cryptoError failure (Cipher.cipherInit dataKey)
+    iv  <- parseIV failure =<< getRandomBytes nonceLength
+    aes <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    let !ciphertext = Cipher.ctrCombine aes iv plaintext
+    let wrappedKey  = rs ^. gdkrsCiphertextBlob
+        !ciphertext = Cipher.ctrCombine aes iv plaintext
+        !digest     = hmac hmacKey ciphertext
 
-    -- Compute an HMAC using the hmac key and the cipher text.
-    pure $! Encrypted
-        (Nonce  nonce)
-        (Key    (rs ^. gdkrsCiphertextBlob))
-        (Cipher ciphertext)
-        (Digest (hmac hmacKey ciphertext))
+    pure $! Encrypted{..}
 
 -- | Decrypt ciphertext using the given encryption context, IV, and encrypted data key.
 -- The HMAC SHA256 is recalculated and compared for message integrity.
@@ -99,32 +97,38 @@ decrypt :: MonadAWS m
         -> Name
         -> Encrypted
         -> m ByteString
-decrypt ctx name encrypted = do
-    let Encrypted (Nonce nonce) (toBS -> key) (toBS -> ciphertext) actual = encrypted
-        rq = KMS.decrypt key & decEncryptionContext .~ fromContext ctx
+decrypt ctx name Encrypted{..} = do
+    let rq = KMS.decrypt wrappedKey
+           & decEncryptionContext .~ fromContext ctx
 
     rs <- catching_ _InvalidCiphertextException (send rq) $
         throwM . DecryptFailure ctx name $
-            if blankContext ctx
+            if Map.null (fromContext ctx)
                 then "Could not decrypt stored key using KMS. \
                      \The credential may require an ecryption context."
                 else  "Could not decrypt stored key using KMS. \
                      \The provided encryption context may not match the one \
                      \used when the credential was stored."
 
-    plaintext <- getPlaintext (DecryptFailure ctx name) rs
+    -- Decrypted plaintext data. This value may not be returned if the customer
+    -- master key is not available or if you didn't have permission to use it.
+    plaintextKey <-
+        case rs ^. drsPlaintext of
+            Nothing -> throwM $
+                DecryptFailure ctx name
+                    "Decrypted plaintext data not available from KMS."
+            Just  t -> pure t
 
-    let (dataKey, hmacKey) = splitKey plaintext
-        expect             = Digest (hmac hmacKey ciphertext)
+    let (dataKey, hmacKey) = splitKey plaintextKey
+        expect             = hmac hmacKey (toBS ciphertext)
         failure            = DecryptFailure ctx name
 
-    unless (expect == actual) $
-        throwM (IntegrityFailure name expect actual)
+    unless (expect == digest) $
+        throwM (IntegrityFailure name (encodeHex expect) (encodeHex digest))
 
-    iv  <- parseIV failure nonce
     aes <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    pure $! Cipher.ctrCombine aes iv ciphertext
+    pure $! Cipher.ctrCombine aes iv (toBS ciphertext)
 
 splitKey :: ByteString -> (ByteString, ByteString)
 splitKey = BS.splitAt 32
@@ -135,6 +139,12 @@ nonceLength = 16
 keyLength :: Natural
 keyLength = 64
 
+cryptoError :: (MonadThrow m, Exception e)
+            => (Text -> e)
+            -> CryptoFailable a
+            -> m a
+cryptoError f = onCryptoFailure (throwM . f . Text.pack . show) pure
+
 parseIV :: (MonadThrow m, Exception e)
        => (Text -> e)
        -> ByteString
@@ -144,19 +154,5 @@ parseIV f bs =
         maybe (CryptoFailed CryptoError_IvSizeInvalid) CryptoPassed
               (Cipher.makeIV bs)
 
-cryptoError :: (MonadThrow m, Exception e)
-            => (Text -> e)
-            -> CryptoFailable a
-            -> m a
-cryptoError f = onCryptoFailure (throwM . f . Text.pack . show) pure
-
--- Decrypted plaintext data. This value may not be returned if the customer
--- master key is not available or if you didn't have permission to use it.
-getPlaintext :: (MonadThrow m, Exception e)
-             => (Text -> e)
-             -> DecryptResponse
-             -> m ByteString
-getPlaintext e rs =
-    maybe (throwM (e "Decrypted plaintext data not available from KMS."))
-          pure
-          (rs ^. drsPlaintext)
+encodeHex :: HMAC a -> ByteString
+encodeHex = convertToBase Base16

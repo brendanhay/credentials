@@ -19,23 +19,17 @@ import Control.Exception.Lens (exception)
 import Control.Lens           hiding (Context)
 import Control.Monad.Catch    (Exception, SomeException)
 
-import Crypto.Hash     (SHA256)
-import Crypto.MAC.HMAC (HMAC)
+import Crypto.Cipher.AES   (AES256)
+import Crypto.Cipher.Types (IV)
+import Crypto.Hash         (Digest, SHA256)
+import Crypto.MAC.HMAC     (HMAC)
 
-import Data.ByteArray.Encoding (Base (Base16), convertToBase)
-import Data.ByteString         (ByteString)
-import Data.HashMap.Strict     (HashMap)
-import Data.Text               (Text)
-import Data.Typeable           (Typeable)
+import Data.ByteString     (ByteString)
+import Data.HashMap.Strict (HashMap)
+import Data.Text           (Text)
+import Data.Typeable       (Typeable)
 
 import Network.AWS.Data
-
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.HashMap.Strict   as Map
-
--- | AES128 CTR mode block cipher initialisation vector.
-newtype Nonce = Nonce ByteString
-    deriving (ToByteString)
 
 -- | The KMS master key identifier.
 newtype KeyId = KeyId Text
@@ -62,33 +56,13 @@ newtype Revision = Revision ByteString
 newtype Context = Context { fromContext :: HashMap Text Text }
     deriving (Eq, Show, Monoid)
 
-blankContext :: Context -> Bool
-blankContext = Map.null . fromContext
-
--- | HMAC SHA256 digest, which can possibly be hex-encoded.
-data HMAC256
-    = Hex    !ByteString
-    | Digest !(HMAC SHA256)
-
-instance Eq HMAC256 where
-    a == b = toBS a == toBS b
-
-instance ToByteString HMAC256 where
-    toBS = \case
-        Hex    h -> h
-        Digest d -> convertToBase Base16 d
-
-instance Show HMAC256 where
-    show = BS8.unpack . toBS
-
--- | Wrapped key.
-newtype Key = Key ByteString deriving (ToByteString)
-
--- | Encrypted ciphertext.
-newtype Cipher = Cipher ByteString deriving (ToByteString)
-
--- | An encrypted secret.
-data Encrypted = Encrypted !Nonce !Key !Cipher !HMAC256
+-- | The encryption parameters required to perform decryption.
+data Encrypted = Encrypted
+    { iv         :: !(IV AES256)   -- ^ The block cipher initialisation vector.
+    , wrappedKey :: !ByteString    -- ^ The wrapped (encrypted) data encryption key.
+    , ciphertext :: !ByteString    -- ^ The encrypted ciphertext.
+    , digest     :: !(HMAC SHA256) -- ^ HMAC SHA256 digest of the ciphertext.
+    }
 
 -- | Denotes idempotency of an action. That is, whether an action resulted
 -- in any setup being performed.
@@ -109,7 +83,7 @@ data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
       -- ^ The specified master key id doesn't exist.
 
-    | IntegrityFailure Name HMAC256 HMAC256
+    | IntegrityFailure Name ByteString ByteString
       -- ^ The computed HMAC doesn't matched the stored HMAC.
 
     | EncryptFailure Context Name Text
@@ -128,7 +102,7 @@ data CredentialError
     | FieldMissing Text [Text]
       -- ^ Missing field from the storage engine.
 
-    | FieldInvalid Text Text
+    | FieldInvalid Text String
       -- ^ Unable to parse field from the storage engine.
 
     | SecretMissing Name (Maybe Revision) Text
