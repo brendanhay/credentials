@@ -14,6 +14,7 @@
 * [Security Considerations](#security-considerations)
 * [Pricing](#pricing)
 * [Contribute](#contribute)
+* [Local Development](#local-development)
 * [Licence](#licence)
 
 
@@ -275,8 +276,8 @@ is compromised and has an IAM role assigned that similarly allows reading items
 from the DynamoDB table and calling KMS `Decrypt`, the attacker will likewise be
 able to recover credentials.
 
-If the instance boundary is to coarse, consider using `iptables` or similar to
-restrict metadata access to priviledged users.
+If the instance boundary is too coarse, consider using `iptables` or similar to
+restrict metadata access to privileged users.
 
 
 ## Pricing
@@ -285,6 +286,17 @@ A single master key in KMS costs $1 USD per month. The DynamoDB table throughput
 is configured to use 1 provisioned read and 1 provisioned write, so if you are using
 less than the free tier limit of 25 reads and 25 writes per second, only the KMS
 charges will apply.
+
+
+## Local Development
+
+You can use both the library and CLI in a limited offline fashion by running
+a [DynamoDBLocal](https://aws.amazon.com/blogs/aws/dynamodb-local-for-desktop-development/)
+instance using the `script/dynamo-local.sh` script. The CLI commands can then
+take a `--uri dynamo://localhost:4000/credentials` parameter to force
+communication with the local DynamoDB database.
+
+Unfortunately there exists no similar mechanism to run KMS locally, currently.
 
 
 ## Contribute
