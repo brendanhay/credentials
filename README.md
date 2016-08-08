@@ -144,9 +144,31 @@ app uri rq f = ...
 
 ### Credential Retrieval
 
-### Credential Management and Auditing
+### Credential Context
 
-[Encryption Context](http://docs.aws.amazon.com/kms/latest/developerguide/encrypt-context.html)
+KMS [Encryption Context](http://docs.aws.amazon.com/kms/latest/developerguide/encrypt-context.html) is optionally supported,
+which is used to check ciphertext integrity but not stored as part of the encryption parameters.
+
+This means you need to pass the exact context that was used for encryption,
+when decrypting, and allows the use of KMS Key Policy and KMS Grant
+conditions. One such use would be to ensure your web and database servers can
+read a database password, but your database servers cannot read your web
+server's private key.
+
+For example, supplying encryption context would look as follows:
+
+```haskell
+$ credentials insert --name hello --secret world \
+    --context application=db \
+    --context environment=production
+
+$ credentials select --name hello \
+    --context application=db \
+    --context environment=production
+```
+
+Failure to specify the exact encryption context resullts in an informative error
+during decryption.
 
 ### Credential Revisions
 
