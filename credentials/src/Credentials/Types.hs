@@ -42,6 +42,8 @@ newtype KeyId = KeyId Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 -- | The default KMS master key alias.
+--
+-- /Value:/ @alias/credentials@
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credentials"
 
@@ -88,7 +90,8 @@ newtype Cipher = Cipher ByteString deriving (ToByteString)
 -- | An encrypted secret.
 data Encrypted = Encrypted !Nonce !Key !Cipher !HMAC256
 
--- | Whether the setup action resulting in any setup actions being performed.
+-- | Denotes idempotency of an action. That is, whether an action resulted
+-- in any setup being performed.
 data Setup
     = Created
     | Exists

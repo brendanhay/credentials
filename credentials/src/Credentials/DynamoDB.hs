@@ -75,6 +75,8 @@ newtype DynamoTable = DynamoTable { tableName :: Text }
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
 -- | The default DynamoDB table used to store credentials.
+--
+-- /Value:/ @credentials@
 defaultTable :: DynamoTable
 defaultTable = DynamoTable "credentials"
 
