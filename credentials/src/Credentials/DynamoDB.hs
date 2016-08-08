@@ -20,11 +20,21 @@
 -- Provides the implementation for storage and retrieval of encrypted credentials
 -- in DynamoDB. The encryption and decryption is handled by "Credentials.KMS".
 --
--- The prime function variants in this module denote that no check for the
--- existence of the underlying storage table is performed.
---
 -- See the "Credentials" module for usage information.
-module Credentials.DynamoDB where
+module Credentials.DynamoDB
+    ( DynamoTable (..)
+    , defaultTable
+
+    -- * Table Operations
+    , setup
+    , teardown
+
+    -- * Storage Operations
+    , insert
+    , select
+    , delete
+    , revisions
+    ) where
 
 import Control.Exception.Lens
 import Control.Lens           hiding (Context)
@@ -62,6 +72,7 @@ import qualified Data.Conduit.List   as CL
 import qualified Data.HashMap.Strict as Map
 import qualified Data.List.NonEmpty  as NE
 
+-- | A DynamoDB table reference.
 newtype DynamoTable = DynamoTable { tableName :: Text }
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
@@ -79,7 +90,7 @@ insert :: (MonadMask m, MonadRandom m, MonadAWS m, Typeable m)
        -> m Revision
 insert key ctx name plaintext table = do
     ciphertext <- encrypt key ctx name plaintext
-    catchResourceNotFound table (insertEncrypted' name ciphertext table)
+    catchResourceNotFound table (insertEncrypted name ciphertext table)
 
 -- |
 select :: MonadAWS m
@@ -90,7 +101,7 @@ select :: MonadAWS m
        -> m (ByteString, Revision)
 select ctx name rev table = do
     (_, (ciphertext, rev')) <-
-        catchResourceNotFound table (selectEncrypted' name rev table)
+        catchResourceNotFound table (selectEncrypted name rev table)
     (,rev') <$> decrypt ctx name ciphertext
 
 -- |
@@ -99,13 +110,48 @@ delete :: MonadAWS m
        -> Maybe Revision
        -> DynamoTable
        -> m ()
-delete name rev table = catchResourceNotFound table (delete' name rev table)
+delete name rev table@DynamoTable{..} =
+    catchResourceNotFound table (maybe deleteAll deleteOne rev)
+  where
+    deleteOne r = do
+        (ver, _) <- selectEncrypted name (Just r) table
+        void . send $ deleteItem tableName & diKey .~ encode name <> encode ver
+
+    deleteAll = paginate qry $$ CL.mapM_ (del . view qrsItems)
+
+    qry = queryByName name table
+        & qAttributesToGet  ?~ nameField :| [versionField]
+        & qScanIndexForward ?~ True
+        & qLimit            ?~ 25
+
+    del []     = pure ()
+    del (x:ys) = void . send $ batchWriteItem
+        & bwiRequestItems .~ [(tableName, f x :| map f xs)]
+      where
+        f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
+
+        xs | i < 24    = take (i - 1) ys
+           | otherwise = ys
+          where
+            i = length ys
 
 -- |
 revisions :: MonadAWS m
           => DynamoTable
           -> Source m (Name, NonEmpty Revision)
-revisions table = catchResourceNotFound table (revisions' table)
+revisions table = catchResourceNotFound table $
+        paginate (scanTable table)
+    =$= CL.concatMapM (traverse decode . view srsItems)
+    =$= CL.groupOn1 fst
+    =$= CL.map group
+  where
+    group ((name, rev), revs) =
+        ( name
+        , desc (rev :| map snd revs)
+        )
+
+    desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
+    desc = NE.map snd . NE.sortWith (Down . fst)
 
 -- |
 setup :: MonadAWS m => DynamoTable -> m Setup
@@ -141,29 +187,12 @@ teardown table@DynamoTable{..} = do
         void $ send (deleteTable tableName)
         void $ await tableNotExists (describeTable tableName)
 
-revisions' :: MonadAWS m
-           => DynamoTable
-           -> Source m (Name, NonEmpty Revision)
-revisions' table =
-        paginate (scanTable table)
-    =$= CL.concatMapM (traverse decode . view srsItems)
-    =$= CL.groupOn1 fst
-    =$= CL.map group
-  where
-    group ((name, rev), revs) =
-        ( name
-        , desc (rev :| map snd revs)
-        )
-
-    desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
-    desc = NE.map snd . NE.sortWith (Down . fst)
-
-insertEncrypted' :: (MonadMask m, MonadAWS m, Typeable m)
-                 => Name
-                 -> Encrypted
-                 -> DynamoTable
-                 -> m Revision
-insertEncrypted' name encrypted table@DynamoTable{..} =
+insertEncrypted :: (MonadMask m, MonadAWS m, Typeable m)
+                => Name
+                -> Encrypted
+                -> DynamoTable
+                -> m Revision
+insertEncrypted name encrypted table@DynamoTable{..} =
     recovering policy [const cond] write
   where
     write = const $ do
@@ -180,13 +209,13 @@ insertEncrypted' name encrypted table@DynamoTable{..} =
 
     policy = constantDelay 1000 <> limitRetries 5
 
-selectEncrypted' :: (MonadThrow m, MonadAWS m)
-                 => Name
-                 -> Maybe Revision
-                 -> DynamoTable
-                 -> m (Version, (Encrypted, Revision))
-selectEncrypted' name rev table@DynamoTable{..} =
-    send (queryName name table & revision rev) >>= result
+selectEncrypted :: (MonadThrow m, MonadAWS m)
+                => Name
+                -> Maybe Revision
+                -> DynamoTable
+                -> m (Version, (Encrypted, Revision))
+selectEncrypted name rev table@DynamoTable{..} =
+    send (queryByName name table & revision rev) >>= result
   where
     result = maybe missing decode . listToMaybe . view qrsItems
 
@@ -200,43 +229,12 @@ selectEncrypted' name rev table@DynamoTable{..} =
         . (qKeyConditions  <>~ equals r)
         . (qConsistentRead ?~ True)
 
--- FIXME: revisit.
-delete' :: MonadAWS m
-       => Name
-       -> Maybe Revision
-       -> DynamoTable
-       -> m ()
-delete' name rev table@DynamoTable{..} =
-    maybe deleteAll deleteOne rev
-  where
-    deleteOne r = do
-        (ver, _) <- selectEncrypted' name (Just r) table
-        void . send $ deleteItem tableName & diKey .~ encode name <> encode ver
-
-    deleteAll = paginate qry $$ CL.mapM_ (del . view qrsItems)
-
-    qry = queryName name table
-        & qAttributesToGet  ?~ nameField :| [versionField]
-        & qScanIndexForward ?~ True
-        & qLimit            ?~ 25
-
-    del []     = pure ()
-    del (x:ys) = void . send $ batchWriteItem
-        & bwiRequestItems .~ [(tableName, f x :| map f xs)]
-      where
-        f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
-
-        xs | i < 24    = take (i - 1) ys
-           | otherwise = ys
-          where
-            i = length ys
-
 latest :: (MonadThrow m, MonadAWS m)
        => Name
        -> DynamoTable
        -> m (Maybe Version)
 latest name table = do
-    rs <- send (queryName name table & qConsistentRead ?~ True)
+    rs <- send (queryByName name table & qConsistentRead ?~ True)
     case listToMaybe (rs ^. qrsItems) of
         Nothing -> pure Nothing
         Just  m -> Just <$> decode m
@@ -251,8 +249,8 @@ scanTable DynamoTable{..} =
     scan tableName
         & sAttributesToGet ?~ nameField :| [versionField, revisionField]
 
-queryName :: Name -> DynamoTable -> Query
-queryName name DynamoTable{..} =
+queryByName :: Name -> DynamoTable -> Query
+queryByName name DynamoTable{..} =
     query tableName
         & qLimit            ?~ 1
         & qScanIndexForward ?~ False
@@ -275,9 +273,6 @@ findC f = loop
          | otherwise = loop
 
 -- FIXME: Over specified due to the coarseness of _ResourceNotFound.
---
--- | The prime function variants ('select' vs 'select\'') don't handle the
--- 'ResourceNotFound' exception that is thrown when the table doesn't exist.
 catchResourceNotFound :: MonadCatch m => DynamoTable -> m b -> m b
 catchResourceNotFound DynamoTable{..} =
     handling_ _ResourceNotFoundException $

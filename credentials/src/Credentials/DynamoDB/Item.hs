@@ -17,7 +17,30 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
-module Credentials.DynamoDB.Item where
+-- This module contains the schema that is used by "Credentials.DynamoDB" to
+-- serialise columns to DynamoDB items.
+module Credentials.DynamoDB.Item
+    (
+    -- * Versioning
+     Version (..)
+
+    -- * Serialisation
+    , Item (..)
+    , Attr (..)
+    , fromAttr
+    , toAttr
+
+    -- * Query Conditions
+    , equals
+
+    -- * Index Names
+    , revisionIndex
+
+    -- * Field Names
+    , revisionField
+    , nameField
+    , versionField
+    ) where
 
 import Control.Lens        (Lens', Prism')
 import Control.Lens        (iso, lens, preview, prism', review, view)

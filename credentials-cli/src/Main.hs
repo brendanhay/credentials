@@ -21,7 +21,6 @@ module Main (main) where
 import Control.Exception.Lens
 import Control.Lens                 ((.~), (<&>))
 import Control.Monad.Catch
-import Control.Monad.Morph          (hoist)
 import Control.Monad.Reader
 import Control.Monad.Trans.Resource
 
