@@ -43,7 +43,7 @@ newtype KeyId = KeyId Text
 
 -- | The default KMS master key alias.
 --
--- /Value:/ @alias/credentials@
+-- /Value:/ @alias\/credentials@
 defaultKeyId :: KeyId
 defaultKeyId = KeyId "alias/credentials"
 

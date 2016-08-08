@@ -97,14 +97,14 @@ program Options{store = store@(Table _ table), ..} = \case
         says ("This will delete revision " %
               rev % " of " % name % " from " % store % " in " % region % "!")
         prompt force $ do
-            delete name (Just rev) table
+            delete name rev table
             emit (DeleteR name rev)
 
     Truncate name force -> do
         says ("This will delete all but the latest revision of " %
               name % " from " % store % " in " % region % "!")
         prompt force $ do
-            delete name Nothing table
+            truncate name table
             emit (TruncateR name)
 
     Setup -> do

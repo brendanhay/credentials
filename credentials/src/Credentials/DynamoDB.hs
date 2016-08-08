@@ -31,6 +31,7 @@ module Credentials.DynamoDB
     , insert
     , select
     , delete
+    , truncate
     , revisions
     ) where
 
@@ -80,49 +81,62 @@ newtype DynamoTable = DynamoTable { tableName :: Text }
 defaultTable :: DynamoTable
 defaultTable = DynamoTable "credentials"
 
--- |
+-- | Encrypt and insert a new credential revision with the specified name.
+--
+-- The newly inserted revision is returned.
 insert :: (MonadMask m, MonadRandom m, MonadAWS m, Typeable m)
-       => KeyId
-       -> Context
-       -> Name
-       -> ByteString
-       -> DynamoTable
+       => KeyId       -- ^ The KMS master key ARN or alias.
+       -> Context     -- ^ The KMS encryption context.
+       -> Name        -- ^ The credential name.
+       -> ByteString  -- ^ The unencrypted plaintext.
+       -> DynamoTable -- ^ The DynamoDB table.
        -> m Revision
 insert key ctx name plaintext table = do
     ciphertext <- encrypt key ctx name plaintext
     catchResourceNotFound table (insertEncrypted name ciphertext table)
 
--- |
+-- | Select an existing credential, optionally specifying the revision.
+--
+-- The decrypted plaintext and selected revision are returned.
 select :: MonadAWS m
-       => Context
-       -> Name
-       -> Maybe Revision
-       -> DynamoTable
+       => Context        -- ^ The KMS encryption context that was used during insertion.
+       -> Name           -- ^ The credential name.
+       -> Maybe Revision -- ^ A revision. If 'Nothing', the latest will be selected.
+       -> DynamoTable    -- ^ The DynamoDB table.
        -> m (ByteString, Revision)
 select ctx name rev table = do
     (_, (ciphertext, rev')) <-
         catchResourceNotFound table (selectEncrypted name rev table)
     (,rev') <$> decrypt ctx name ciphertext
 
--- |
+-- | Delete the specific credential revision.
 delete :: MonadAWS m
-       => Name
-       -> Maybe Revision
-       -> DynamoTable
+       => Name        -- ^ The credential name.
+       -> Revision    -- ^ The revision to delete.
+       -> DynamoTable -- ^ The DynamoDB table.
        -> m ()
 delete name rev table@DynamoTable{..} =
-    catchResourceNotFound table (maybe deleteAll deleteOne rev)
+    catchResourceNotFound table $ do
+        (ver, _) <- selectEncrypted name (Just rev) table
+        void . send $
+            deleteItem tableName
+                & diKey .~ encode name <> encode ver
+
+-- | Truncate all of a credential's revisions, so that only
+-- the latest revision remains.
+truncate :: MonadAWS m
+         => Name        -- ^ The credential name.
+         -> DynamoTable -- ^ The DynamoDB table.
+         -> m ()
+truncate name rev table@DynamoTable{..} =
+    catchResourceNotFound table (qry $$ CL.mapM_ (del . view qrsItems))
   where
-    deleteOne r = do
-        (ver, _) <- selectEncrypted name (Just r) table
-        void . send $ deleteItem tableName & diKey .~ encode name <> encode ver
-
-    deleteAll = paginate qry $$ CL.mapM_ (del . view qrsItems)
-
-    qry = queryByName name table
+    qry = paginate
+        ( queryByName name table
         & qAttributesToGet  ?~ nameField :| [versionField]
         & qScanIndexForward ?~ True
-        & qLimit            ?~ 25
+        & qLimit            ?~ 50
+        )
 
     del []     = pure ()
     del (x:ys) = void . send $ batchWriteItem
@@ -130,14 +144,15 @@ delete name rev table@DynamoTable{..} =
       where
         f k = writeRequest & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
 
-        xs | i < 24    = take (i - 1) ys
+        xs | i < 49    = take (i - 1) ys
            | otherwise = ys
           where
             i = length ys
 
--- |
+-- | Scan the entire credential database, grouping pages of results into
+-- unique credential names and their corresponding revisions.
 revisions :: MonadAWS m
-          => DynamoTable
+          => DynamoTable -- ^ The DynamoDB table.
           -> Source m (Name, NonEmpty Revision)
 revisions table = catchResourceNotFound table $
         paginate (scanTable table)
@@ -145,16 +160,15 @@ revisions table = catchResourceNotFound table $
     =$= CL.groupOn1 fst
     =$= CL.map group
   where
-    group ((name, rev), revs) =
-        ( name
-        , desc (rev :| map snd revs)
-        )
+    group ((name, rev), revs) = (name, desc (rev :| map snd revs))
 
     desc :: NonEmpty (Version, Revision) -> NonEmpty Revision
     desc = NE.map snd . NE.sortWith (Down . fst)
 
--- |
-setup :: MonadAWS m => DynamoTable -> m Setup
+-- | Create the credentials database table.
+setup :: MonadAWS m
+      => DynamoTable -- ^ The DynamoDB table.
+      -> m Setup
 setup table@DynamoTable{..} = do
     p <- exists table
     unless p $ do
@@ -179,7 +193,10 @@ setup table@DynamoTable{..} = do
            then Exists
            else Created
 
--- |
+-- | Delete the credentials database table and all data.
+--
+-- /Note:/ Unless you have DynamoDB backups running, this is a completely
+-- irrevocable action.
 teardown :: MonadAWS m => DynamoTable -> m ()
 teardown table@DynamoTable{..} = do
     p <- exists table
