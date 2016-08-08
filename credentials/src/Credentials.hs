@@ -11,9 +11,10 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
--- $usage
 module Credentials
     (
+    -- $usage
+
     -- * Types
       Name              (..)
     , Revision          (..)
@@ -95,7 +96,7 @@ example = do
         _ <- Credentials.insert key mempty name "a-super-secret-value" table
 
         -- Selecting the credential by name, and specifying 'Nothing' for the
-        -- revision results in the latest credential revision being returned.
+p        -- revision results in the latest credential revision being returned.
         Credentials.select mempty name Nothing table
 @
 
