@@ -1,10 +1,1 @@
-compiler:   ghc-8.0.1
-resolver:   nightly-2016-08-06
-flags:
-  aeson-pretty:
-    lib-only: true
-extra-deps:
-  - aeson-pretty-0.8.1
-packages:
-  - credentials
-  - credentials-cli
+stack-8.0.1.yaml
