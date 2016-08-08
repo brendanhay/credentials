@@ -34,7 +34,10 @@ developer machines. Instead you can securely administer and distribute
 secrets, leveraging Amazon's IAM policies for access control and permissions to
 ensure limited read-only permissions from production/deployed hosts where applicable.
 
-Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information.
+Please see the [introductory blog post](http://brendanhay.nz/credentials) for more information,
+or Haddock documentation which is built by CI from the `develop` branch
+can be found [here](http://brendanhay.nz/credentials-doc).
+
 
 If Haskell is not your thing, check out [credstash](https://github.com/fugue/credstash),
 the Python project that inspired `credentials`.
