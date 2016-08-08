@@ -22,6 +22,8 @@
 --
 -- The prime function variants in this module denote that no check for the
 -- existence of the underlying storage table is performed.
+--
+-- See the "Credentials" module for usage information.
 module Credentials.DynamoDB where
 
 import Control.Exception.Lens

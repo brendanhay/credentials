@@ -58,20 +58,20 @@ import System.IO
 
 example :: IO (ByteString, Revision)
 example = do
-    -- A new 'Logger' to replace the default noop logger is created, with the logger set to print debug information and errors to stdout.
-    lgr  <- newLogger Debug stdout
+    -- A new 'Logger' to replace the default noop logger is created, which will
+    -- print AWS debug information and errors to stdout.
+    lgr <- newLogger Debug stdout
 
-    -- To specify configuration preferences, 'newEnv' is used to create a new configuration environment.
-    -- The 'Region' denotes the AWS region requests will be performed against, and 'Credentials' is used to specify the desired mechanism for supplying or retrieving AuthN/AuthZ information.
-    -- In this case, 'Discover' will cause the library to try a number of options such as default environment variables, or an instance's IAM Profile.
-    env  <- newEnv Frankfurt Discover
+    -- A new amazonka 'Env' is created, which auto-discovers the
+    -- underlying host credentials.
+    env <- newEnv Frankfurt Discover
 
     let table = "dynamo-table-name"
         key   = "kms-key-alias"
         name  = "credential-name"
 
-    -- We now run the 'AWS' computation with the overriden logger, performing the
-    -- sequence of credentials operations.
+    -- We now run the 'AWS' computation with the overriden logger,
+    -- performing the sequence of credentials operations.
     runResourceT . runAWS (env & envLogger .~ lgr) $ do
         -- Firstly, we create the DynamoDB table.
         -- This is an idempotent operation but since it makes remote API calls,

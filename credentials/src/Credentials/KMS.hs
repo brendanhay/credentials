@@ -12,6 +12,10 @@
 -- Stability   : provisional
 -- Portability : non-portable (GHC extensions)
 --
+-- Encryption and decryption of local data, by using a wrapped key mechanism
+-- and master keys stored in KMS.
+--
+-- See the "Credentials" module for usage information.
 module Credentials.KMS
     ( encrypt
     , decrypt
@@ -46,7 +50,10 @@ import qualified Data.ByteString     as BS
 import qualified Data.Text           as Text
 import qualified Network.AWS.KMS     as KMS
 
--- |
+-- | Encrypt a plaintext 'ByteString' with the given master key and
+-- encryption context. The 'Name' is used to annotate error messages.
+--
+-- The resulting IV, encrypted data key, ciphertext, and HMAC SHA256 are returned.
 encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
         => KeyId
         -> Context
@@ -82,7 +89,11 @@ encrypt key ctx name plaintext = do
         (Cipher ciphertext)
         (Digest (hmac hmacKey ciphertext))
 
--- |
+-- | Decrypt ciphertext using the given encryption context, IV, and encrypted data key.
+-- The HMAC SHA256 is recalculated and compared for message integrity.
+-- The 'Name' is used to annotate error messages.
+--
+-- The resulting unencrypted plaintext 'ByteString' is returned if no error occurs.
 decrypt :: MonadAWS m
         => Context
         -> Name
