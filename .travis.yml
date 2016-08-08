@@ -1,0 +1,34 @@
+sudo: false
+
+env:
+  global:
+    - secure: fxJPfu/icH+3w9nRcedFtqNumnpmo1vWAA7HBaeeCF0vnzTHBbD2ej3olyaDmFoJ9PaW84q5UKX3iU6BBXLmlestOZCcfQ9nDvVuIVpimIovO7QuZhnRYea0SaSRcXEgNE+nWEcsiiKWuVUnDEXAUQRCs04YQpAvgsUjMcZgXQw=
+
+cache:
+  apt: true
+  directories:
+    - ~/.stack
+
+branches:
+  only:
+    - master
+    - develop
+
+before_install:
+    - export PATH=/opt/ghc/$GHCVER/bin:$PATH
+    - export PATH=~/.local/bin:$PATH
+    - ./script/travis-lifecycle-before_install
+
+install:
+    - ./script/travis-lifecycle-install
+
+script:
+    - ./script/travis-lifecycle-script
+
+matrix:
+  fast_finish: true
+  include:
+    - env: GHCVER=7.10.3 LIBRARY=documentation
+      addons: { apt: { packages: [ghc-7.10.3], sources: [hvr-ghc] } }
+    - env: GHCVER=8.0.1 LIBRARY=credentials
+      addons: { apt: { packages: [ghc-8.0.1], sources: [hvr-ghc] } }
