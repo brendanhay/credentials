@@ -11,8 +11,8 @@
     - [Credential Contexts](#credential-contexts)
     - [Credential Revisions](#credential-revisions)
     - [IAM Policies](#iam-policies)
+* [Security Considerations](#security-considerations)
 * [Pricing](#pricing)
-* [Security Notes](#security-notes)
 * [Contribute](#contribute)
 * [Licence](#licence)
 
@@ -208,7 +208,7 @@ It's recommended you allow only the minimal set of permissions as your usecase
 requires. For example, the following two IAM policies illustrate the minimum
 allowable API operations for read/write, and read only access respectively:
 
-**Read and Write**
+ **Read and Write**
 
 ```json
 {
@@ -259,15 +259,29 @@ allowable API operations for read/write, and read only access respectively:
 
 Remember to replace the use of `AWS_ACCOUNT_ID` above with your own account identifier.
 
+
+## Security Considerations
+
+Any IAM user who can read items from the DynamoDB credentials table and can
+call KMS `Decrypt`, can obtain the plaintext of stored credentials.
+
+Similarly when using `credentials` as part of an EC2 deployment, the instance
+boundary will be the security boundary as the IAM role credentials are available
+via the local EC2 metadata service at `http://169.254.169.254`. If your instance
+is compromised and has an IAM role assigned that similarly allows reading items
+from the DynamoDB table and calling KMS `Decrypt`, the attacker will likewise be
+able to recover credentials.
+
+If the instance boundary is to coarse, consider using `iptables` or similar to
+restrict metadata access to priviledged users.
+
+
 ## Pricing
 
 A single master key in KMS costs $1 USD per month. The DynamoDB table throughput
 is configured to use 1 provisioned read and 1 provisioned write, so if you are using
 less than the free tier limit of 25 reads and 25 writes per second, only the KMS
 charges will apply.
-
-
-## Security Notes
 
 
 ## Contribute
