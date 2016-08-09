@@ -22,9 +22,8 @@ import Control.Monad.Catch (MonadThrow (..))
 
 import Credentials.Types
 
-import Crypto.Cipher.Types (BlockCipher, IV, makeIV)
-import Crypto.Hash         (SHA256, digestFromByteString)
-import Crypto.MAC.HMAC     (HMAC (..))
+import Crypto.Hash     (SHA256, digestFromByteString)
+import Crypto.MAC.HMAC (HMAC (..))
 
 import Data.Bifunctor          (bimap)
 import Data.ByteArray          (convert)
@@ -54,12 +53,11 @@ newtype Version = Version Integer
 equals :: Item a => a -> HashMap Text Condition
 equals = Map.map (\x -> condition EQ' & cAttributeValueList .~ [x]) . toItem
 
-nameField, revisionField, versionField, ivField, wrappedKeyField,
+nameField, revisionField, versionField, wrappedKeyField,
  ciphertextField, digestField :: Text
 nameField       = "name"
 revisionField   = "revision"
 versionField    = "version"
-ivField         = "iv"
 wrappedKeyField = "key"
 ciphertextField = "contents"
 digestField     = "hmac"
@@ -95,16 +93,14 @@ instance Item Version where
 instance Item Encrypted where
     toItem Encrypted{..} =
         Map.fromList
-            [ (ivField,         toAttr iv)
-            , (wrappedKeyField, toAttr wrappedKey)
+            [ (wrappedKeyField, toAttr wrappedKey)
             , (ciphertextField, toAttr ciphertext)
             , (digestField,     toAttr digest)
             ]
 
     parseItem m =
         Encrypted
-            <$> parse ivField m
-            <*> parse wrappedKeyField m
+            <$> parse wrappedKeyField m
             <*> parse ciphertextField m
             <*> parse digestField m
 
@@ -153,12 +149,6 @@ instance Attribute Version where
             y = Text.drop (Text.length x) padding <> x
          in toAttr y
     parseAttr = fmap Version . parseAttr
-
-instance BlockCipher a => Attribute (IV a) where
-    toAttr   iv = toAttr (convert iv :: ByteString)
-    parseAttr v = do
-        bs :: ByteString <- parseAttr v
-        makeIV bs
 
 instance Attribute (HMAC SHA256) where
     toAttr = toAttr . Text.decodeUtf8 . convertToBase Base16 . hmacGetDigest

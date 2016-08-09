@@ -19,10 +19,8 @@ import Control.Exception.Lens (exception)
 import Control.Lens           hiding (Context)
 import Control.Monad.Catch    (Exception, SomeException)
 
-import Crypto.Cipher.AES   (AES256)
-import Crypto.Cipher.Types (IV)
-import Crypto.Hash         (Digest, SHA256)
-import Crypto.MAC.HMAC     (HMAC)
+import Crypto.Hash     (SHA256)
+import Crypto.MAC.HMAC (HMAC)
 
 import Data.ByteString     (ByteString)
 import Data.HashMap.Strict (HashMap)
@@ -58,8 +56,7 @@ newtype Context = Context { fromContext :: HashMap Text Text }
 
 -- | The encryption parameters required to perform decryption.
 data Encrypted = Encrypted
-    { iv         :: !(IV AES256)   -- ^ The block cipher initialisation vector.
-    , wrappedKey :: !ByteString    -- ^ The wrapped (encrypted) data encryption key.
+    { wrappedKey :: !ByteString    -- ^ The wrapped (encrypted) data encryption key.
     , ciphertext :: !ByteString    -- ^ The encrypted ciphertext.
     , digest     :: !(HMAC SHA256) -- ^ HMAC SHA256 digest of the ciphertext.
     }

@@ -50,8 +50,7 @@ import Credentials.DynamoDB.Item
 import Credentials.KMS           as KMS
 import Credentials.Types
 
-import Crypto.Hash   (Digest, SHA1)
-import Crypto.Random (MonadRandom (..))
+import Crypto.Hash (Digest, SHA1)
 
 import Data.ByteArray.Encoding
 import Data.ByteString         (ByteString)
@@ -88,7 +87,7 @@ defaultTable = DynamoTable "credentials"
 -- | Encrypt and insert a new credential revision with the specified name.
 --
 -- The newly inserted revision is returned.
-insert :: (MonadMask m, MonadRandom m, MonadAWS m, Typeable m)
+insert :: (MonadMask m, MonadAWS m, Typeable m)
        => KeyId       -- ^ The KMS master key ARN or alias.
        -> Context     -- ^ The KMS encryption context.
        -> Name        -- ^ The credential name.

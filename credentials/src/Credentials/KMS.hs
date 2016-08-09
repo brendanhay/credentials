@@ -29,10 +29,9 @@ import Control.Monad.Catch    (Exception, MonadThrow (..), catches)
 import Credentials.Types
 
 import Crypto.Cipher.AES   (AES256)
-import Crypto.Cipher.Types (IV)
+import Crypto.Cipher.Types (nullIV)
 import Crypto.Error
 import Crypto.MAC.HMAC     (HMAC (..), hmac)
-import Crypto.Random       (MonadRandom (..))
 
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import Data.ByteString         (ByteString)
@@ -55,9 +54,9 @@ import qualified Network.AWS.KMS     as KMS
 -- | Encrypt a plaintext 'ByteString' with the given master key and
 -- encryption context. The 'Name' is used to annotate error messages.
 --
--- The resulting IV, encrypted data key, ciphertext, and HMAC SHA256 are returned
+-- The wrapped data encryption key, ciphertext, and HMAC SHA256 are returned
 -- if no error occurs.
-encrypt :: (MonadRandom m, MonadAWS m, Typeable m)
+encrypt :: (MonadAWS m, Typeable m)
         => KeyId
         -> Context
         -> Name
@@ -78,18 +77,17 @@ encrypt key ctx name plaintext = do
     let (dataKey, hmacKey) = splitKey (rs ^. gdkrsPlaintext)
         failure            = EncryptFailure ctx name
 
-    iv  <- parseIV failure =<< getRandomBytes nonceLength
-    aes <- cryptoError failure (Cipher.cipherInit dataKey)
+    aes :: AES256 <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    let wrappedKey  = rs ^. gdkrsCiphertextBlob
-        !ciphertext = Cipher.ctrCombine aes iv plaintext
+    let !wrappedKey = rs ^. gdkrsCiphertextBlob
+        !ciphertext = Cipher.ctrCombine aes nullIV plaintext
         !digest     = hmac hmacKey ciphertext
 
     pure $! Encrypted{..}
 
--- | Decrypt ciphertext using the given encryption context, IV, and encrypted data key.
--- The HMAC SHA256 is recalculated and compared for message integrity.
--- The 'Name' is used to annotate error messages.
+-- | Decrypt ciphertext using the given encryption context, and wrapped
+-- data encryption key. The HMAC SHA256 is recalculated and compared for
+-- message integrity. The 'Name' is used to annotate error messages.
 --
 -- The resulting unencrypted plaintext 'ByteString' is returned if no error occurs.
 decrypt :: MonadAWS m
@@ -126,15 +124,12 @@ decrypt ctx name Encrypted{..} = do
     unless (expect == digest) $
         throwM (IntegrityFailure name (encodeHex expect) (encodeHex digest))
 
-    aes <- cryptoError failure (Cipher.cipherInit dataKey)
+    aes :: AES256 <- cryptoError failure (Cipher.cipherInit dataKey)
 
-    pure $! Cipher.ctrCombine aes iv (toBS ciphertext)
+    pure $! Cipher.ctrCombine aes nullIV (toBS ciphertext)
 
 splitKey :: ByteString -> (ByteString, ByteString)
 splitKey = BS.splitAt 32
-
-nonceLength :: Int
-nonceLength = 16
 
 keyLength :: Natural
 keyLength = 64
@@ -144,15 +139,6 @@ cryptoError :: (MonadThrow m, Exception e)
             -> CryptoFailable a
             -> m a
 cryptoError f = onCryptoFailure (throwM . f . Text.pack . show) pure
-
-parseIV :: (MonadThrow m, Exception e)
-       => (Text -> e)
-       -> ByteString
-       -> m (IV AES256)
-parseIV f bs =
-    cryptoError f $
-        maybe (CryptoFailed CryptoError_IvSizeInvalid) CryptoPassed
-              (Cipher.makeIV bs)
 
 encodeHex :: HMAC a -> ByteString
 encodeHex = convertToBase Base16
