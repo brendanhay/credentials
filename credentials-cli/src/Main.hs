@@ -1,19 +1,16 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
-{-# LANGUAGE ExtendedDefaultRules       #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE TupleSections        #-}
+{-# LANGUAGE TypeFamilies         #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 -- |
 -- Module      : Main
--- Copyright   : (c) 2015 Brendan Hay
+-- Copyright   : (c) 2015-2016 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
@@ -21,248 +18,262 @@
 --
 module Main (main) where
 
-import           Control.Exception.Lens
-import           Control.Lens                 (view, ( # ), (&), (.~), (<&>))
-import           Control.Monad
-import           Control.Monad.Catch
-import           Control.Monad.IO.Class
-import           Credentials                  as Store hiding (context)
-import           Credentials.CLI.IO
-import           Credentials.CLI.Options
-import           Credentials.CLI.Types
-import           Data.Bifunctor
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
-import           Data.ByteString.Builder      (Builder)
-import qualified Data.ByteString.Builder      as Build
-import qualified Data.ByteString.Char8        as BS8
-import           Data.Char
-import           Data.Conduit                 (($$))
-import qualified Data.Conduit.List            as CL
-import           Data.Data
-import           Data.HashMap.Strict          (HashMap)
-import           Data.List                    (foldl', sort)
-import           Data.List.NonEmpty           (NonEmpty (..))
-import qualified Data.List.NonEmpty           as NE
-import           Data.Maybe
-import           Data.Proxy
-import qualified Data.Text                    as Text
-import qualified Data.Text.IO                 as Text
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Network.AWS.S3               (BucketName, ObjectVersionId)
-import           Numeric.Natural
-import           Options.Applicative          hiding (optional)
-import qualified Options.Applicative          as Opt
-import           System.Exit
-import           System.IO
-import           Text.PrettyPrint.ANSI.Leijen (Doc, bold, indent, (<+>), (</>))
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
+import Prelude hiding (truncate)
+
+import Control.Exception.Lens
+import Control.Lens                 ((.~), (<&>))
+import Control.Monad.Catch
+import Control.Monad.Reader
+import Control.Monad.Trans.Resource
+
+import Credentials             hiding (context)
+import Credentials.CLI.Format
+import Credentials.CLI.IO
+import Credentials.CLI.Options
+import Credentials.CLI.Types
+
+import Data.ByteString.Builder (Builder)
+import Data.Conduit
+import Data.Conduit.Lazy
+import Data.List.NonEmpty      (NonEmpty)
+import Data.Text               (Text)
+
+import Network.AWS
+
+import Options.Applicative             hiding (optional)
+import Options.Applicative.Help.Pretty
+
+import System.IO
+
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Conduit.Binary  as CB
+import qualified Data.Conduit.List    as CL
 
 default (Builder, Text)
 
--- Deleting:
---   how about tombstones, or some thought out plan for how the version number
---   semantics are impacted by deletes.
-
---   Some opaque version format returned?
---     sha (version + timestamp)?
-
--- Large File Storage:
---   have a pointer to something in S3, or actually store everything there?
---   is S3's versioning enough?
-
--- Val:
---   rename to Table -> Item -> Attribute
-
 main :: IO ()
 main = do
-    (r, v, m) <- customExecParser settings options
+    (opt, mode) <- customExecParser (prefs (showHelpOnError <> columns 90)) options
 
-    l <- newLogger v stdout
-    e <- newEnv r Discover <&> (envLogger .~ l) . setStore (current m)
+    lgr <- newLogger (level opt) stderr
+    env <- newEnv (region opt) Discover <&> (envLogger .~ lgr) . setStore opt
 
-    catches (runApp e (program r m))
-        [ handler _CredentialError $ \x -> quit 1 (show x)
+    catches (runApp env opt (program opt mode))
+        [ handler _CredentialError (quit 1 . show)
         ]
 
-program :: Region -> Mode -> App ()
-program r = \case
-    Setup s -> do
-        says ("Setting up " % s <> " in " % r <> ".")
-        x <- Store.setup s
-        says $ "Created " % s % " " % x % "."
+program :: Options -> Mode -> App ()
+program Options{store = store@(Table _ table), ..} = \case
+    List -> do
+        says ("Listing contents of " % store % " in " % region % "...")
+        runLazy (revisions table) >>=
+            emit . ListR
 
-    Cleanup s f -> do
-        says ("This will delete " % s % " from " % r % "!")
-        prompt f $ do
-            Store.cleanup s
-            says ("Deleted " % s % ".")
+    Insert key ctx name input -> do
+        says ("Writing new revision of " %
+              name % " to " % store % " in " % region % "...")
+        rev <- case input of
+            Value val  -> insert key ctx name val table
+            Path  path -> do
+                sz <- getFileSize path
+                if sz > 190 * 1024
+                    then throwM $ StorageFailure
+                        "Secret file is larger than allowable storage size."
+                    else do
+                        cs <- liftIO . runResourceT $
+                            CB.sourceFile path $$ CL.consume
+                        let val = LBS.toStrict (LBS.fromChunks cs)
+                        insert key ctx name val table
+        emit (InsertR name rev)
 
-    List s f -> do
-        xs <- list s
-        say (Output f (s, xs))
+    Select ctx name rev -> do
+        say "Retrieving"
+        case rev of
+            Nothing -> pure ()
+            Just r  -> say (" revision " % r % " of")
+        says (" " % name % " from " % store % " in " % region % "...")
+        (val, rev') <- select ctx name rev table
+        emit (SelectR name rev' val)
 
-    Put s k c n i -> do
-        says ("Put " % n % " to " % s % ".")
-        x <- case i of
-            Raw  v -> pure v
-            Path p -> do
-                says ("Reading secret from " % p % "...")
-                Value <$> liftIO (BS.readFile p)
+    Delete name rev force -> do
+        says ("This will delete revision " %
+              rev % " of " % name % " from " % store % " in " % region % "!")
+        prompt force $ do
+            delete name rev table
+            emit (DeleteR name rev)
 
-        v <- Store.put k c n x s
-        says ("Wrote version " % v % " of " % n % ".")
+    Truncate name force -> do
+        says ("This will delete all but the latest revision of " %
+              name % " from " % store % " in " % region % "!")
+        prompt force $ do
+            truncate name table
+            emit (TruncateR name)
 
-    Get s c n v f -> do
-        x <- Store.get c n v s
-        say (Output f (n, x))
+    Setup -> do
+        says ("Setting up " % store % " in " % region % ".")
+        says "Running ..."
+        setup table >>= emit . SetupR
 
-    Delete s n v f -> do
-        says ("This will delete version " % v % " of " % n % " from " % s % " in " % r % "!")
-        prompt f $ do
-            Store.delete n v s
-            says ("Deleted version " % v % " of " % n % ".")
+    Teardown force -> do
+        says ("This will delete " % store % " from " % region % "!")
+        prompt force $ do
+            teardown table
+            emit TeardownR
 
-settings :: ParserPrefs
-settings = prefs (showHelpOnError <> columns 90)
-
-options :: ParserInfo (Region, LogLevel, Mode)
+options :: ParserInfo (Options, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
     desc = bold "credentials"
-        <+> "- Provides a unified interface for managing secure, shared credentials."
+        <+> "- Administration tool for managing secure, shared credentials."
 
-    modes = subparser $ mconcat
-        [ mode "setup"
-            (Setup <$> store)
-            "Setup a new credential store."
-            "Foo "
+    modes = hsubparser $ mconcat
+        [ mode "list"
+            (pure List)
+            "List credential names and their respective revisions."
+            "This does not perform decryption of any credentials, and can be used \
+            \to obtain an overview of the credential names and revisions that \
+            \are stored."
 
-        , mode "cleanup"
-            (Cleanup <$> store <*> force)
-            "Remove the credential store entirely."
-            "Bar"
+        , mode "select"
+            (Select <$> context <*> name <*> optional revision)
+            "Fetch and decrypt a specific credential revision."
+            "Defaults to the latest available revision, if --revision is not specified."
 
-        , mode "list"
-            (List <$> store <*> format)
-            "List all credential names and their respective versions."
-            "The -u,--uri option takes a URI conforming to one of the following protocols"
-
-        , mode "get"
-            (Get <$> store <*> context <*> require name <*> optional version <*> format)
-            "Fetch and decrypt a specific version of a credential."
-            "Defaults to the latest available version, if --version is not specified."
-
-        , mode "put"
-            (Put <$> store <*> key <*> context <*> require name <*> input)
-            "Write and encrypt a new version of a credential to the store."
-            "You can supply the secret as a string with --secret, or as \
-            \a file path to the secret's contents using --path."
+        , mode "insert"
+            (Insert <$> key <*> context <*> name <*> input)
+            "Write and encrypt a new credential revision."
+            "You can supply the secret value as a string with --secret, or as \
+            \a file path which contents' will be read by using --path."
 
         , mode "delete"
-            (Delete <$> store <*> require name <*> require version <*> force)
-            "Remove a specific version of a credential from the store."
-            "Foo"
+            (Delete <$> name <*> require revision <*> force)
+            "Remove a specific credential revision."
+            "Please note that if an application is pinned to the revision specified \
+            \by --revision, it will no longer be able to decrypt the credential."
 
         , mode "truncate"
-            (DeleteAll <$> store <*> optional name <*> retain <*> force)
-            "Remove multiple versions of a credential from the store."
-            "If no credential name is specified, it will operate on all \
-            \credentials. Defaults to removing all but the latest version."
+            (Truncate <$> name <*> force)
+            "Truncate a specific credential's revisions."
+            "This will remove all but the most recent credential revision. \
+            \That is, after running this command you will have exactly _one_ \
+            \revision for the given credential name."
+
+        , mode "setup"
+            (pure Setup)
+            "Setup a new credential store."
+            "This will run the necessary actions to create a new credential store. \
+            \This action is idempotent and if the store already exists, \
+            \the operation will succeed with exit status 0."
+
+        , mode "teardown"
+            (Teardown <$> force)
+            "Remove an entire credential store."
+            "Warning: This will completely remove the credential store. For some \
+            \storage engines this action is irrevocable unless you specifically \
+            \perform backups for your data."
         ]
 
-mode :: String
-     -> Parser a
-     -> String
-     -> Doc
-     -> Mod CommandFields (Region, LogLevel, a)
-mode n p h foot = command n (info ((,,) <$> region <*> level <*> p) desc)
+mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
+mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
   where
-    desc = fullDesc <> progDesc h <> footerDoc (Just (indent 2 foot))
+    desc = progDescDoc (Just $ wrap h)
+    foot = footerDoc   (Just $ indent 2 (wrap f) <> line)
 
-region :: Parser Region
-region = option text
-     ( short 'r'
-    <> long "region"
-    <> metavar "REGION"
-    <> tabular "The AWS region in which to operate."
-         "The following regions are supported:"
-             (map (second (PP.text . show) . join (,)) unsafeEnum)
-         Frankfurt Nothing
-     )
+common :: Parser Options
+common = Options
+    <$> textOption
+         ( short 'r'
+        <> long "region"
+        <> metavar "REGION"
+        <> completes "The AWS region in which to operate."
+             "The following regions are supported:"
+                 (map (,mempty) unsafeEnum)
+             defaultRegion Nothing
+         )
 
-level :: Parser LogLevel
-level = option text
-     ( short 'l'
-    <> long "level"
-    <> metavar "LEVEL"
-    <> tabular "Log level of AWS messages to emit."
-         "The following log levels are supported:"
-             [ (Error, "Service errors and exceptions.")
-             , (Debug, "Requests and responses.")
-             , (Trace, "Sensitive signing metadata.")
-             ]
-         Info Nothing
-     )
+    <*> textOption
+         ( short 'u'
+        <> long "uri"
+        <> metavar "URI"
+        <> defaults "URI specifying the storage system to use."
+             "The URI format must follow the following protocol:"
+                 [ ("dynamo:/[/host[:port]]/table-name", "")
+                 ]
+             (defaultStore defaultRegion)
+             (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \
+                   \the default AWS endpoints will be used.")
+         )
 
-store :: Parser Store
-store = option text
-     ( short 'u'
-    <> long "uri"
-    <> metavar "URI"
-    <> defaults "URI specifying the storage system to use."
-         "The URI format must be one of the following protocols:"
-             [ ("dynamo://[host[:port]]/table-name", "?")
-             , ("s3://[host[:port]]/bucket-name[/prefix]", "?")
-             ]
-         defaultStore
-         (Just $ "If no host is specified for AWS services (ie. scheme:///path),"
-             </> "then the AWS endpoints will be used if appropriate.")
-     )
+    <*> textOption
+         ( short 'o'
+        <> long "output"
+        <> metavar "FORMAT"
+        <> completes "Output format for displaying retrieved credentials."
+             "The following formats are supported:"
+                 [ (Pretty, "Pretty printed JSON.")
+                 , (JSON,   "Single-line JSON output.")
+                 , (Echo,   "Untitled textual output with no trailing newline.")
+                 , (Print,  "Print multi-line user output.")
+                 ]
+             Print Nothing
+         )
+
+    <*> textOption
+         ( short 'l'
+        <> long "level"
+        <> metavar "LEVEL"
+        <> completes "Log level of AWS messages to emit."
+             "The following log levels are supported:"
+                 [ (Error, "Service errors and exceptions.")
+                 , (Debug, "Requests and responses.")
+                 , (Trace, "Sensitive signing metadata.")
+                 , (Info,  "No logging of library routines.")
+                 ]
+             Info Nothing
+         )
 
 key :: Parser KeyId
-key = option text
+key = textOption
     ( short 'k'
    <> long "key"
-   <> metavar "STRING"
+   <> metavar "ARN"
    <> defaults "The KMS Master Key Id to use."
        "Examples of KMS aliases or ARNs are:"
-           [ ("arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012", "Key ARN Example")
-           , ("arn:aws:kms:us-east-1:123456789012:alias/MyAliasName", "Alias ARN Example")
-           , ("12345678-1234-1234-1234-123456789012", "Globally Unique Key ID Example")
-           , ("alias/MyAliasName", "Alias Name Example")
+           [ ("arn:aws:kms:us-east-1:1234:key/12345678-1234", "")
+           , ("arn:aws:kms:us-east-1:1234:alias/MyAliasName", "")
+           , ("12345678-1234-1234-12345",                     "")
+           , ("alias/MyAliasName",                            "")
            ]
        defaultKeyId
-       Nothing
+       (Just "It's recommended to setup a new key using the default alias.")
     )
 
 context :: Parser Context
-context = toContext $ option text
+context = ctx $ textOption
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
-   <> describe "A key/value pair to add to the encryption context."
+   <> describe "A key/value pair to add to the encryption context. \
+               \The same context must be provided during encryption and decryption."
         (Just $ "You can enter multiple key/value pairs. For example:"
       </> indent 2 "-c foo=bar -c something=\"containing spaces\" ..."
         ) Optional
     )
 
-name :: Fact -> Parser Name
-name r = option text
+name :: Parser Name
+name = textOption
      ( short 'n'
     <> long "name"
     <> metavar "STRING"
-    <> describe "The unique name of the credential." Nothing r
+    <> describe "The unique name of the credential." Nothing Required
      )
 
-version :: Fact -> Parser Version
-version r = option text
+revision :: Fact -> Parser Revision
+revision r = textOption
      ( short 'v'
-    <> long "version"
+    <> long "revision"
     <> metavar "STRING"
-    <> describe "The version of the secret." Nothing r
+    <> describe "The revision of the credential." Nothing r
      )
 
 force :: Parser Force
@@ -272,38 +283,15 @@ force = flag Prompt NoPrompt
     <> help "Always overwrite or remove, without an interactive prompt."
      )
 
-format :: Parser Format
-format = option text
-     ( short 'o'
-    <> long "format"
-    <> metavar "FORMAT"
-    <> tabular "Output format for displaying retrieved credentials."
-         "The following formats are supported:"
-             [ (Pretty, "Pretty printed JSON.")
-             , (JSON,   "JSON suitable for piping to another process.")
-             , (Shell,  "Single or multi-line textual output.")
-             ]
-         Shell Nothing
-     )
-
-retain :: Parser Natural
-retain = option text
-     ( short 'k'
-    <> long "keep"
-    <> metavar "NUMBER"
-    <> help "Number of versions to retain when truncating. [default: latest]"
-    <> value 1
-     )
-
 input :: Parser Input
 input = textual <|> filepath
   where
-    textual = Raw
-        <$> option text
+    textual = Value
+        <$> textOption
              ( short 's'
             <> long "secret"
             <> metavar "STRING"
-            <> help "The unencrypted secret."
+            <> help "The unencrypted secret value of the credential."
              )
 
     filepath = Path
@@ -311,6 +299,6 @@ input = textual <|> filepath
              ( short 'p'
             <> long "path"
             <> metavar "PATH"
-            <> help "A file to read as the contents of the unencrypted secret."
+            <> help "A file to read as the contents of the unencrypted credential."
             <> action "file"
              )

@@ -1,14 +1,13 @@
-{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 -- |
 -- Module      : Credentials.Types
--- Copyright   : (c) 2015 Brendan Hay
+-- Copyright   : (c) 2015-2016 Brendan Hay
 -- License     : Mozilla Public License, v. 2.0.
 -- Maintainer  : Brendan Hay <brendan.g.hay@gmail.com>
 -- Stability   : provisional
@@ -16,116 +15,72 @@
 --
 module Credentials.Types where
 
-import           Control.Exception.Lens
-import           Control.Lens            hiding (Context)
-import           Control.Monad
-import           Control.Monad.Catch
-import           Control.Monad.Trans.AWS
-import           Crypto.Hash             (SHA256)
-import           Crypto.MAC.HMAC         (HMAC)
-import           Data.ByteArray
-import           Data.ByteArray.Encoding
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString.Char8   as BS8
-import           Data.HashMap.Strict     (HashMap)
-import qualified Data.HashMap.Strict     as Map
-import           Data.List.NonEmpty      (NonEmpty (..))
-import           Data.Maybe
-import           Data.Monoid
-import           Data.String
-import qualified Data.Text               as Text
-import           Data.Typeable
-import           Network.AWS
-import           Network.AWS.Data
-import           Network.AWS.Data.Text
-import           Numeric.Natural
+import Control.Exception.Lens (exception)
+import Control.Lens           hiding (Context)
+import Control.Monad.Catch    (Exception, SomeException)
+
+import Crypto.Hash     (SHA256)
+import Crypto.MAC.HMAC (HMAC)
+
+import Data.ByteString     (ByteString)
+import Data.HashMap.Strict (HashMap)
+import Data.Text           (Text)
+import Data.Typeable       (Typeable)
+
+import Network.AWS.Data
 
 -- | The KMS master key identifier.
 newtype KeyId = KeyId Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
+-- | The default KMS master key alias.
+--
+-- /Value:/ @alias\/credentials@
 defaultKeyId :: KeyId
-defaultKeyId = KeyId "alias/credential-store"
+defaultKeyId = KeyId "alias/credentials"
 
 -- | A shared/readable name for a secret.
 newtype Name = Name Text
     deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
--- | An unencrypted secret value.
-newtype Value = Value ByteString
-    deriving (Eq, Ord, FromText, ToByteString)
+-- | An opaque, non-monotonic revision number.
+newtype Revision = Revision ByteString
+    deriving (Eq, Ord, Show, FromText, ToText, ToByteString, ToLog)
 
-instance Show Value where
-    show = const "Value *****"
-
--- | An incrementing version number.
-newtype Version = Version Natural
-    deriving (Eq, Ord, Num, Show, FromText, ToText, ToByteString)
-
-instance ToLog Version where
-    build (Version n) = build (toInteger n)
-
--- | An encryption context.
-newtype Context = Context { context :: HashMap Text Text }
+-- | A KMS encryption context.
+--
+-- /See:/ KMS <http://docs.aws.amazon.com/kms/latest/developerguide/encrypt-context.html Encryption Context>
+-- documentation for more information.
+newtype Context = Context { fromContext :: HashMap Text Text }
     deriving (Eq, Show, Monoid)
 
-blank :: Context -> Bool
-blank = Map.null . context
+-- | The encryption parameters required to perform decryption.
+data Encrypted = Encrypted
+    { wrappedKey :: !ByteString    -- ^ The wrapped (encrypted) data encryption key.
+    , ciphertext :: !ByteString    -- ^ The encrypted ciphertext.
+    , digest     :: !(HMAC SHA256) -- ^ HMAC SHA256 digest of the ciphertext.
+    }
 
--- | Wrapped key.
-newtype Key = Key ByteString deriving (ToByteString)
-
--- | Encrypted ciphertext.
-newtype Cipher = Cipher ByteString deriving (ToByteString)
-
--- | HMAC SHA256 of the Ciphertext, possibly hex-encoded.
-data HMAC256
-    = Hex    ByteString
-    | Digest (HMAC SHA256)
-
-instance Eq HMAC256 where
-    a == b = toBS a == toBS b
-
-instance ToByteString HMAC256 where
-    toBS = \case
-        Hex    h -> h
-        Digest d -> convertToBase Base16 d
-
-instance Show HMAC256 where
-    show = BS8.unpack . toBS
-
--- | An encrypted secret.
-data Secret = Secret Key Cipher HMAC256
-
+-- | Denotes idempotency of an action. That is, whether an action resulted
+-- in any setup being performed.
 data Setup
     = Created
     | Exists
       deriving (Eq, Show)
 
-instance ToLog Setup where
-    build = \case
+instance ToText Setup where
+    toText = \case
         Created -> "created"
         Exists  -> "exists"
 
-class Storage m where
-    type Layer m :: * -> *
-    data Ref   m :: *
-
-    layer     :: m a -> Layer m a
-
-    setup     ::                          Ref m -> m Setup
-    cleanup   ::                          Ref m -> m ()
-    list      ::                          Ref m -> m [(Name, NonEmpty Version)]
-    insert    :: Name -> Secret        -> Ref m -> m Version
-    select    :: Name -> Maybe Version -> Ref m -> m (Secret, Version)
-    delete    :: Name -> Version       -> Ref m -> m ()
-    deleteAll :: Name                  -> Ref m -> m ()
+instance ToLog Setup where
+    build = build . toText
 
 data CredentialError
     = MasterKeyMissing KeyId (Maybe Text)
       -- ^ The specified master key id doesn't exist.
 
-    | IntegrityFailure Name HMAC256 HMAC256
+    | IntegrityFailure Name ByteString ByteString
       -- ^ The computed HMAC doesn't matched the stored HMAC.
 
     | EncryptFailure Context Name Text
@@ -137,17 +92,21 @@ data CredentialError
     | StorageMissing Text
       -- ^ Storage doesn't exist, or has gone on holiday.
 
+    | StorageFailure Text
+      -- ^ Some storage pre-condition wasn't met.
+      -- For example: DynamoDB column size exceeded.
+
     | FieldMissing Text [Text]
       -- ^ Missing field from the storage engine.
 
-    | FieldInvalid Text Text
+    | FieldInvalid Text String
       -- ^ Unable to parse field from the storage engine.
 
-    | SecretMissing Name Text
+    | SecretMissing Name (Maybe Revision) Text
       -- ^ Secret with the specified name cannot found.
 
-    | OptimisticLockFailure Name Version Text
-      -- ^ Attempting to insert a version that (already, or now) exists.
+    | OptimisticLockFailure Name Revision Text
+      -- ^ Attempting to insert a revision that already exists.
 
       deriving (Eq, Show, Typeable)
 
