@@ -145,10 +145,10 @@ truncate name table@DynamoTable{..} = catchResourceNotFound table $
     deleteMany (x:xs) = void . send $
         batchWriteItem
             & bwiRequestItems .~
-                [ (tableName, deleteItem x :| map deleteItem (batchInit xs))
+                [ (tableName, deleteKey x :| map deleteKey (batchInit xs))
                 ]
 
-    deleteItem k =
+    deleteKey k =
         writeRequest
             & wrDeleteRequest ?~ (deleteRequest & drKey .~ k)
 
