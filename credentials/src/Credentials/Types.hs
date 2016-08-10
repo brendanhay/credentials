@@ -2,7 +2,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 -- |
@@ -16,7 +15,7 @@
 module Credentials.Types where
 
 import Control.Exception.Lens (exception)
-import Control.Lens           hiding (Context)
+import Control.Lens           (Prism', prism)
 import Control.Monad.Catch    (Exception, SomeException)
 
 import Crypto.Hash     (SHA256)
@@ -112,7 +111,92 @@ data CredentialError
 
 instance Exception CredentialError
 
-makeClassyPrisms ''CredentialError
+class AsCredentialError a where
+    _CredentialError       :: Prism' a CredentialError
+    _MasterKeyMissing      :: Prism' a (KeyId, Maybe Text)
+    _IntegrityFailure      :: Prism' a (Name, ByteString, ByteString)
+    _EncryptFailure        :: Prism' a (Context, Name, Text)
+    _DecryptFailure        :: Prism' a (Context, Name, Text)
+    _StorageMissing        :: Prism' a Text
+    _StorageFailure        :: Prism' a Text
+    _FieldMissing          :: Prism' a (Text, [Text])
+    _FieldInvalid          :: Prism' a (Text, String)
+    _SecretMissing         :: Prism' a (Name, Maybe Revision, Text)
+    _OptimisticLockFailure :: Prism' a (Name, Revision, Text)
+
+    _MasterKeyMissing      = (.) _CredentialError _MasterKeyMissing
+    _IntegrityFailure      = (.) _CredentialError _IntegrityFailure
+    _EncryptFailure        = (.) _CredentialError _EncryptFailure
+    _DecryptFailure        = (.) _CredentialError _DecryptFailure
+    _StorageMissing        = (.) _CredentialError _StorageMissing
+    _StorageFailure        = (.) _CredentialError _StorageFailure
+    _FieldMissing          = (.) _CredentialError _FieldMissing
+    _FieldInvalid          = (.) _CredentialError _FieldInvalid
+    _SecretMissing         = (.) _CredentialError _SecretMissing
+    _OptimisticLockFailure = (.) _CredentialError _OptimisticLockFailure
+
+instance AsCredentialError CredentialError where
+    _CredentialError = id
+
+    _MasterKeyMissing = prism
+        (\(key, msg) -> MasterKeyMissing key msg)
+        (\case
+            MasterKeyMissing key msg -> Right (key, msg)
+            x                        -> Left x)
+
+    _IntegrityFailure = prism
+        (\(name, a, b) -> IntegrityFailure name a b)
+        (\case
+            IntegrityFailure name a b -> Right (name, a, b)
+            x                         -> Left x)
+
+    _EncryptFailure = prism
+        (\(ctx, name, msg) -> EncryptFailure ctx name msg)
+        (\case
+            EncryptFailure ctx name msg -> Right (ctx, name, msg)
+            x                           -> Left x)
+
+    _DecryptFailure = prism
+        (\(ctx, name, msg) -> DecryptFailure ctx name msg)
+        (\case
+            DecryptFailure ctx name msg -> Right (ctx, name, msg)
+            x                           -> Left x)
+
+    _StorageMissing = prism
+        StorageMissing
+        (\case
+            StorageMissing msg -> Right msg
+            x                  -> Left x)
+
+    _StorageFailure = prism
+        StorageFailure
+        (\case
+            StorageFailure msg -> Right msg
+            x                  -> Left x)
+
+    _FieldMissing = prism
+        (\(field, found) -> FieldMissing field found)
+        (\case
+            FieldMissing field found -> Right (field, found)
+            x                        -> Left x)
+
+    _FieldInvalid = prism
+        (\(field, msg) -> FieldInvalid field msg)
+        (\case
+            FieldInvalid field msg -> Right (field, msg)
+            x                      -> Left x)
+
+    _SecretMissing = prism
+        (\(name, rev, msg) -> SecretMissing name rev msg)
+        (\case
+            SecretMissing name rev msg -> Right (name, rev, msg)
+            x                          -> Left x)
+
+    _OptimisticLockFailure = prism
+        (\(name, rev, msg) -> OptimisticLockFailure name rev msg)
+        (\case
+            OptimisticLockFailure name rev msg -> Right (name, rev, msg)
+            x                                  -> Left x)
 
 instance AsCredentialError SomeException where
     _CredentialError = exception
