@@ -25,8 +25,6 @@ import Credentials.Types
 import Crypto.Hash     (SHA256, digestFromByteString)
 import Crypto.MAC.HMAC (HMAC (..))
 
-import Data.Bifunctor          (bimap)
-import Data.ByteArray          (convert)
 import Data.ByteArray.Encoding (Base (Base16), convertFromBase, convertToBase)
 import Data.ByteString         (ByteString)
 import Data.HashMap.Strict     (HashMap)
