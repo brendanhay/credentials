@@ -31,8 +31,7 @@ import Network.AWS.Data
 
 import Options.Applicative.Help hiding (list, string)
 
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text            as Text
+import qualified Data.Text as Text
 
 data Status
     = Deleted

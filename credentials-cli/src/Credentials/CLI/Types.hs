@@ -136,7 +136,7 @@ instance FromURI Store where
     fromURI u = Table u <$> fromURI u
 
 instance ToText Store where
-    toText = toText . URI.serializeURI' . \case
+    toText = toText . URI.serializeURIRef' . \case
         Table u _ -> u
 
 instance Show   Store where show   = Text.unpack . toText
@@ -185,5 +185,5 @@ instance FromText Pair where
         key = A.skipSpace *> A.takeWhile1 (/= '=')
         val = A.char '='  *> A.takeText
 
-ctx :: Alternative f => f Pair -> f Context
-ctx f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f
+fromPairs :: Alternative f => f Pair -> f Context
+fromPairs f = Context . Map.fromList . map (\(Pair k v) -> (k, v)) <$> many f

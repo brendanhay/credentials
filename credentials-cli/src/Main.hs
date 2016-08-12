@@ -26,7 +26,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Trans.Resource
 
-import Credentials             hiding (context)
+import Credentials
 import Credentials.CLI.Format
 import Credentials.CLI.IO
 import Credentials.CLI.Options
@@ -34,8 +34,6 @@ import Credentials.CLI.Types
 
 import Data.ByteString.Builder (Builder)
 import Data.Conduit
-import Data.Conduit.Lazy
-import Data.List.NonEmpty      (NonEmpty)
 import Data.Text               (Text)
 
 import Network.AWS
@@ -53,12 +51,13 @@ default (Builder, Text)
 
 main :: IO ()
 main = do
-    (opt, mode) <- customExecParser (prefs (showHelpOnError <> columns 90)) options
+    (opt, m) <-
+        customExecParser (prefs (showHelpOnError <> columns 90)) options
 
     lgr <- newLogger (level opt) stderr
     env <- newEnv (region opt) Discover <&> (envLogger .~ lgr) . setStore opt
 
-    catches (runApp env opt (program opt mode))
+    catches (runApp env opt (program opt m))
         [ handler _CredentialError (quit 1 . show)
         ]
 
@@ -135,24 +134,24 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             \are stored."
 
         , mode "select"
-            (Select <$> context <*> name <*> optional revision)
+            (Select <$> contextOption <*> nameOption <*> optional revisionOption)
             "Fetch and decrypt a specific credential revision."
             "Defaults to the latest available revision, if --revision is not specified."
 
         , mode "insert"
-            (Insert <$> key <*> context <*> name <*> input)
+            (Insert <$> keyOption <*> contextOption <*> nameOption <*> inputOption)
             "Write and encrypt a new credential revision."
             "You can supply the secret value as a string with --secret, or as \
             \a file path which contents' will be read by using --path."
 
         , mode "delete"
-            (Delete <$> name <*> require revision <*> force)
+            (Delete <$> nameOption <*> require revisionOption <*> forceFlag)
             "Remove a specific credential revision."
             "Please note that if an application is pinned to the revision specified \
             \by --revision, it will no longer be able to decrypt the credential."
 
         , mode "truncate"
-            (Truncate <$> name <*> force)
+            (Truncate <$> nameOption <*> forceFlag)
             "Truncate a specific credential's revisions."
             "This will remove all but the most recent credential revision. \
             \That is, after running this command you will have exactly _one_ \
@@ -166,7 +165,7 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             \the operation will succeed with exit status 0."
 
         , mode "teardown"
-            (Teardown <$> force)
+            (Teardown <$> forceFlag)
             "Remove an entire credential store."
             "Warning: This will completely remove the credential store. For some \
             \storage engines this action is irrevocable unless you specifically \
@@ -174,13 +173,14 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
         ]
 
 mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
-mode n p h f = command n (info ((,) <$> common <*> p) (fullDesc <> desc <> foot))
-  where
-    desc = progDescDoc (Just $ wrap h)
-    foot = footerDoc   (Just $ indent 2 (wrap f) <> line)
+mode name p desc foot =
+    command name $ info ((,) <$> commonOptions <*> p)
+        ( fullDesc <> progDescDoc (Just $ wrap desc)
+                   <> footerDoc   (Just $ indent 2 (wrap foot) <> line)
+        )
 
-common :: Parser Options
-common = Options
+commonOptions :: Parser Options
+commonOptions = Options
     <$> textOption
          ( short 'r'
         <> long "region"
@@ -232,8 +232,8 @@ common = Options
              Info Nothing
          )
 
-key :: Parser KeyId
-key = textOption
+keyOption :: Parser KeyId
+keyOption = textOption
     ( short 'k'
    <> long "key"
    <> metavar "ARN"
@@ -248,8 +248,8 @@ key = textOption
        (Just "It's recommended to setup a new key using the default alias.")
     )
 
-context :: Parser Context
-context = ctx $ textOption
+contextOption :: Parser Context
+contextOption = fromPairs $ textOption
     ( short 'c'
    <> long "context"
    <> metavar "KEY=VALUE"
@@ -260,31 +260,31 @@ context = ctx $ textOption
         ) Optional
     )
 
-name :: Parser Name
-name = textOption
+nameOption :: Parser Name
+nameOption = textOption
      ( short 'n'
     <> long "name"
     <> metavar "STRING"
     <> describe "The unique name of the credential." Nothing Required
      )
 
-revision :: Fact -> Parser Revision
-revision r = textOption
+revisionOption :: Fact -> Parser Revision
+revisionOption r = textOption
      ( short 'v'
     <> long "revision"
     <> metavar "STRING"
     <> describe "The revision of the credential." Nothing r
      )
 
-force :: Parser Force
-force = flag Prompt NoPrompt
+forceFlag :: Parser Force
+forceFlag = flag Prompt NoPrompt
      ( short 'f'
     <> long "force"
     <> help "Always overwrite or remove, without an interactive prompt."
      )
 
-input :: Parser Input
-input = textual <|> filepath
+inputOption :: Parser Input
+inputOption = textual <|> filepath
   where
     textual = Value
         <$> textOption
