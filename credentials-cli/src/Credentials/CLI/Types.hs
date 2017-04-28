@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -35,7 +36,9 @@ import Data.ByteString.Builder (Builder)
 import Data.Conduit
 import Data.Conduit.Lazy
 import Data.Data
+import Data.Functor.Identity   (Identity (..))
 import Data.List               (sort)
+import Data.Maybe              (fromMaybe)
 import Data.Text               (Text)
 
 import Network.AWS
@@ -92,14 +95,17 @@ instance FromText Format where
         "echo"   -> pure Echo
         e        -> fromTextError $ "Failure parsing format from: " <> e
 
-data Options = Options
-    { region :: !Region
-    , store  :: !Store
+data Options f = Options
+    { region :: !(f Region)
+    , store  :: !(f Store)
     , format :: !Format
     , level  :: !LogLevel
     }
 
-newtype App a = App { unApp :: ReaderT Options AWS a }
+deriving instance Show (Options Maybe)
+deriving instance Show (Options Identity)
+
+newtype App a = App { unApp :: ReaderT (Options Identity) AWS a }
     deriving
         ( Functor
         , Applicative
@@ -108,7 +114,7 @@ newtype App a = App { unApp :: ReaderT Options AWS a }
         , MonadThrow
         , MonadCatch
         , MonadMask
-        , MonadReader Options
+        , MonadReader (Options Identity)
         , MonadBase IO
         )
 
@@ -121,7 +127,7 @@ instance MonadResource App where
 instance MonadRandom App where
     getRandomBytes = liftIO . getRandomBytes
 
-runApp :: Env -> Options -> App a -> IO a
+runApp :: Env -> Options Identity -> App a -> IO a
 runApp e c = runResourceT . runAWS e . (`runReaderT` c) . unApp
 
 runLazy :: Source App a -> App [a]
@@ -143,6 +149,14 @@ instance Show   Store where show   = Text.unpack . toText
 instance Pretty Store where pretty = text . show
 instance ToLog  Store where build  = build . toText
 
+defaultOptions :: Options Maybe -> Options Identity
+defaultOptions x =
+    let r = fromMaybe defaultRegion    (region x)
+        s = fromMaybe (defaultStore r) (store  x)
+     in x { region = Identity r
+          , store  = Identity s
+          }
+
 defaultRegion :: Region
 defaultRegion = Frankfurt
 
@@ -156,11 +170,11 @@ defaultStore r = Table u defaultTable
     p = Port (_endpointPort e)
     e = defaultEndpoint dynamoDB r
 
-setStore :: HasEnv a => Options -> a -> a
+setStore :: HasEnv a => Options Identity -> a -> a
 setStore c = configure f
   where
     f = case store c of
-        Table u _ -> g u dynamoDB
+        Identity (Table u _) -> g u dynamoDB
 
     g u | Just h <- host u = setEndpoint (secure u) h (port u)
         | otherwise        = id

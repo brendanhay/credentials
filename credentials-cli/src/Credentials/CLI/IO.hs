@@ -24,6 +24,7 @@ import Data.Aeson.Encode
 import Data.Aeson.Encode.Pretty
 import Data.ByteString.Builder  (Builder, hPutBuilder, stringUtf8)
 import Data.Char                (isSpace, toLower)
+import Data.Functor.Identity    (runIdentity)
 import Data.Monoid
 
 import Network.AWS.Data
@@ -60,7 +61,7 @@ say x = do
 emit :: Result -> App ()
 emit r = do
     (f, s) <- asks (format &&& store)
-    let e = Emit s r
+    let e = Emit (runIdentity s) r
     liftIO . hPutBuilder stdout $
         case f of
             Pretty -> build (encodePretty e) <> "\n"

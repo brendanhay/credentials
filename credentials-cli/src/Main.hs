@@ -5,6 +5,7 @@
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE TupleSections        #-}
 {-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE ViewPatterns         #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -34,6 +35,7 @@ import Credentials.CLI.Types
 
 import Data.ByteString.Builder (Builder)
 import Data.Conduit
+import Data.Functor.Identity   (Identity (..))
 import Data.Text               (Text)
 
 import Network.AWS
@@ -43,6 +45,7 @@ import Options.Applicative.Help.Pretty
 
 import System.IO
 
+import qualified Control.Applicative as App
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Conduit.Binary  as CB
 import qualified Data.Conduit.List    as CL
@@ -51,18 +54,21 @@ default (Builder, Text)
 
 main :: IO ()
 main = do
-    (opt, m) <-
+    (defaultOptions -> opt, m) <-
         customExecParser (prefs (showHelpOnError <> columns 90)) options
 
     lgr <- newLogger (level opt) stderr
-    env <- newEnv (region opt) Discover <&> (envLogger .~ lgr) . setStore opt
+    env <- newEnv (runIdentity (region opt)) Discover
+        <&> (envLogger .~ lgr) . setStore opt
 
     catches (runApp env opt (program opt m))
         [ handler _CredentialError (quit 1 . show)
         ]
 
-program :: Options -> Mode -> App ()
-program Options{store = store@(Table _ table), ..} = \case
+program :: Options Identity -> Mode -> App ()
+program Options{ store  = Identity store@(Table _ table)
+               , region = Identity region
+               , ..}    = \case
     List -> do
         says ("Listing contents of " % store % " in " % region % "...")
         runLazy (revisions table) >>=
@@ -119,7 +125,7 @@ program Options{store = store@(Table _ table), ..} = \case
             teardown table
             emit TeardownR
 
-options :: ParserInfo (Options, Mode)
+options :: ParserInfo (Options Maybe, Mode)
 options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
   where
     desc = bold "credentials"
@@ -172,37 +178,47 @@ options = info (helper <*> modes) (fullDesc <> headerDoc (Just desc))
             \perform backups for your data."
         ]
 
-mode :: String -> Parser a -> Text -> Text -> Mod CommandFields (Options, a)
+mode :: String
+     -> Parser a
+     -> Text
+     -> Text
+     -> Mod CommandFields (Options Maybe, a)
 mode name p desc foot =
     command name $ info ((,) <$> commonOptions <*> p)
         ( fullDesc <> progDescDoc (Just $ wrap desc)
                    <> footerDoc   (Just $ indent 2 (wrap foot) <> line)
         )
 
-commonOptions :: Parser Options
+commonOptions :: Parser (Options Maybe)
 commonOptions = Options
-    <$> textOption
+    <$> App.optional (textOption
          ( short 'r'
         <> long "region"
         <> metavar "REGION"
         <> completes "The AWS region in which to operate."
              "The following regions are supported:"
                  (map (,mempty) unsafeEnum)
-             defaultRegion Nothing
-         )
+             Nothing
+             (Just "Note: this corresponds to both the KMS key region and the \
+                   \DynamoDB table region.")
+         ))
 
-    <*> textOption
+    <*> App.optional (textOption
          ( short 'u'
         <> long "uri"
         <> metavar "URI"
         <> defaults "URI specifying the storage system to use."
              "The URI format must follow the following protocol:"
                  [ ("dynamo:/[/host[:port]]/table-name", "")
+                 , (show (defaultStore defaultRegion),   "")
+
                  ]
-             (defaultStore defaultRegion)
-             (Just "If no host is specified for AWS services (ie. dynamo:/table-name), \
-                   \the default AWS endpoints will be used.")
-         )
+             Nothing
+             (Just "If no host is specified (ie. dynamo:/table-name), \
+                   \the default AWS endpoint for the given --region will be used. \
+                   \If an AWS endpoint is specified the endpoint region MUST \
+                   \correspond with --region, or a signature error will occur.")
+         ))
 
     <*> textOption
          ( short 'o'
@@ -215,7 +231,7 @@ commonOptions = Options
                  , (Echo,   "Untitled textual output with no trailing newline.")
                  , (Print,  "Print multi-line user output.")
                  ]
-             Print Nothing
+             (Just Print) Nothing
          )
 
     <*> textOption
@@ -229,7 +245,7 @@ commonOptions = Options
                  , (Trace, "Sensitive signing metadata.")
                  , (Info,  "No logging of library routines.")
                  ]
-             Info Nothing
+             (Just Info) Nothing
          )
 
 keyOption :: Parser KeyId
@@ -244,7 +260,7 @@ keyOption = textOption
            , ("12345678-1234-1234-12345",                     "")
            , ("alias/MyAliasName",                            "")
            ]
-       defaultKeyId
+       (Just defaultKeyId)
        (Just "It's recommended to setup a new key using the default alias.")
     )
 
