@@ -195,6 +195,8 @@ setup table@DynamoTable{..} = do
                 , attributeDefinition versionField  S
                 , attributeDefinition revisionField B
                 ]
+            -- FIXME: Only non-key attributes need to be specified
+            -- in the non-key attributes .. duh.
             secn = ctLocalSecondaryIndexes .~
                 [ localSecondaryIndex revisionField
                     (keySchemaElement nameField Hash

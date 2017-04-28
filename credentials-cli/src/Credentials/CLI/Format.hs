@@ -20,19 +20,18 @@ module Credentials.CLI.Format where
 import Credentials
 import Credentials.CLI.Types
 
-import Data.Aeson         (ToJSON (..), object, (.=))
+import Data.Aeson            (ToJSON (..), object, (.=))
 import Data.Bifunctor
-import Data.ByteString    (ByteString)
-import Data.List          (foldl', intersperse)
-import Data.List.NonEmpty (NonEmpty (..))
+import Data.ByteString       (ByteString)
+import Data.List             (foldl', intersperse)
+import Data.List.NonEmpty    (NonEmpty (..))
 import Data.Monoid
 
 import Network.AWS.Data
 
 import Options.Applicative.Help hiding (list, string)
 
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text            as Text
+import qualified Data.Text as Text
 
 data Status
     = Deleted

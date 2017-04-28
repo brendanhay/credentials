@@ -14,6 +14,7 @@ import Credentials.CLI.Types
 
 import Data.Bifunctor
 import Data.List      (foldl')
+import Data.Maybe     (isJust)
 
 import Network.AWS.Data
 import Network.AWS.Data.Text
@@ -52,7 +53,7 @@ completes :: ToText a
           => Text          -- ^ The options' description.
           -> Text          -- ^ A title for the values.
           -> [(a, String)] -- ^ Possible values and their documentation.
-          -> a             -- ^ A default value.
+          -> Maybe a       -- ^ A default value.
           -> Maybe Text    -- ^ Footer contents.
           -> Mod OptionFields a
 completes title note xs x foot = doc <> completeWith (map fst ys)
@@ -66,15 +67,22 @@ defaults :: ToText a
          => Text
          -> Text
          -> [(String, String)]
-         -> a
+         -> Maybe a
          -> Maybe Text
          -> Mod OptionFields a
-defaults title note xs x foot = describe title (Just doc) Default <> value x
+defaults title note xs x foot =
+    describe title (Just doc) Default <> maybe mempty value x
   where
     doc   = maybe table (table .$.) (wrap <$> foot)
     table = wrap note
         .$. indent 2 rows
-        .$. ("Defaults to " <> bold (text (string x)) <> ".")
+        $$$ ( case x of
+               Nothing -> mempty
+               Just y  -> "Defaults to " <> bold (text (string y)) <> "."
+            )
+
+    ($$$) | isJust  x = (.$.)
+          | otherwise = mappend
 
     len = maximum (map (length . fst) xs)
 
@@ -87,7 +95,7 @@ defaults title note xs x foot = describe title (Just doc) Default <> value x
             ts | null v    = mempty
                | otherwise = tupled [text v]
 
-require :: Functor f => (Fact -> f a) -> f a
+require :: (Fact -> a) -> a
 require f = f Required
 
 optional :: Alternative f => (Fact -> f a) -> f (Maybe a)

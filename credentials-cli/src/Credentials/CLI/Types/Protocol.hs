@@ -60,11 +60,11 @@ path :: URI -> Text
 path = toText . BS8.dropWhile (== '/') . uriPath
 
 host :: URI -> Maybe ByteString
-host = preview (uriAuthorityL . _Just . authorityHostL . hostBSL)
+host = preview (authorityL . _Just . authorityHostL . hostBSL)
 
 secure :: URI -> Bool
 secure = (== 443) . port
 
 port :: URI -> Int
 port = fromMaybe 443 . preview
-    (uriAuthorityL . _Just . authorityPortL . _Just . portNumberL)
+    (authorityL . _Just . authorityPortL . _Just . portNumberL)
