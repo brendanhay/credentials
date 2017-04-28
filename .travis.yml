@@ -1,35 +1,116 @@
 sudo: false
-
-env:
-  global:
-    - secure: UcFOubx5exS33UozkL2yolgipQxl7MMYCvHLDIIUC/D6IlNiywZoDPqzVVt+nk13SsvuCqxFqySdcZRui+YcYWaWB5PCz0DUnYGtxjFLZ89JUxq25O6hXLUgit9pe0ikQSMEyKHE5SDEwuisXs1RFPjTP9Wg3eSS98o0WHRSnNAXeXsTAsFlMayzLAa/Kew+YPw57c/H2etpo9TxoXZ+RSu1cQ9JWn5yuQr7p8F7RMa+bDikye6dl3yXfHwZwISTgk9mp1ExYhXj1VAv0I6CAC97n/h6lI6jHH7o3Q082PAEqlMx7bSY7mlKDEdBVF0nsAtKpJQAZ8JG3x9cAIAmp1Ryap1ut/Tka1vSVZB7tJAj6LC8sorG7NcId31QL2Qx9qKTtbstzSxYRzQqrRcGMIAToFz+iSLfC1B2DgUF6S9OM/fLkb21+ByzBfeTtUgR7bYSErDXB5Ze53r54/YNNwxtSomJ5TLeJx5zfMn5z4UIULsEUEECtrdbHimB2gf2BEJUKZHDbyKVvIFY14Jf/v2cyUbIZtYxneeYu2hraV3+bcFURr6uGtr/Csqc0rtXdrurW/x9gJ31aVyDIdpzZHkQEkqwNKXW/HiI9TZXgSa254MeM4oscjbPBAVUZkvkR55j+tdU7hFCKvrM1WcCuzl1XneojuemVGBwIzXghHk=
-
+language: c
 cache:
-  apt: true
   directories:
-    - ~/.stack
-
-branches:
-  only:
-    - master
-    - develop
-
-before_install:
-    - export PATH=/opt/ghc/$GHCVER/bin:$PATH
-    - export PATH=~/.local/bin:$PATH
-    - ./script/travis-lifecycle-before_install
-
-install:
-    - ./script/travis-lifecycle-install
-
-script:
-    - ./script/travis-lifecycle-script
+    - $HOME/.ghc
+    - $HOME/.cabal
+    - $HOME/.stack
 
 matrix:
-  fast_finish: true
   include:
-    - env: GHCVER=7.10.3 LIBRARY=documentation
-      addons: { apt: { packages: [ghc-7.10.3], sources: [hvr-ghc] } }
-    - env: GHCVER=8.0.1 LIBRARY=credentials
-      addons: { apt: { packages: [ghc-8.0.1], sources: [hvr-ghc] } }
+    - env: BUILD=cabal GHCVER=7.10.3 CABALVER=1.22 HAPPYVER=1.19.5 ALEXVER=3.1.7
+      compiler: ": #GHC 7.10.3"
+      addons: {apt: {packages: [cabal-install-1.22,ghc-7.10.3,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
 
+    - env: BUILD=cabal GHCVER=8.0.2 CABALVER=1.24 HAPPYVER=1.19.5 ALEXVER=3.1.7
+      compiler: ": #GHC 8.0.2"
+      addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.2,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
+
+    - env: BUILD=cabal GHCVER=head  CABALVER=head HAPPYVER=1.19.5 ALEXVER=3.1.7
+      compiler: ": #GHC HEAD"
+      addons: {apt: {packages: [cabal-install-head,ghc-head,happy-1.19.5,alex-3.1.7], sources: [hvr-ghc]}}
+
+    - env: BUILD=stack ARGS=""
+      compiler: ": #stack default"
+      addons: {apt: {packages: [ghc-7.10.3], sources: [hvr-ghc]}}
+
+    - env: BUILD=stack ARGS="--resolver lts-6"
+      compiler: ": #stack 7.10.3"
+      addons: {apt: {packages: [ghc-7.10.3], sources: [hvr-ghc]}}
+
+    - env: BUILD=stack ARGS="--resolver nightly"
+      compiler: ": #stack nightly"
+      addons: {apt: {packages: [libgmp,libgmp-dev]}}
+
+    - env: BUILD=stack ARGS="--resolver lts-6"
+      compiler: ": #stack 7.10.3 osx"
+      os: osx
+
+    - env: BUILD=stack ARGS="--resolver nightly"
+      compiler: ": #stack nightly osx"
+      os: osx
+
+    allow_failures:
+      - env: BUILD=cabal GHCVER=head  CABALVER=head HAPPYVER=1.19.5 ALEXVER=3.1.7
+      - env: BUILD=stack ARGS="--resolver nightly"
+
+before_install:
+  - unset CC
+  - CABALARGS=""
+  - if [ "x$GHCVER" = "xhead" ]; then CABALARGS=--allow-newer; fi
+  - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$HOME/.local/bin:/opt/alex/$ALEXVER/bin:/opt/happy/$HAPPYVER/bin:$HOME/.cabal/bin:$PATH
+  - mkdir -p ~/.local/bin
+  - |
+    if [ `uname` = "Darwin" ]
+    then
+      travis_retry curl --insecure -L https://www.stackage.org/stack/osx-x86_64 | tar xz --strip-components=1 --include '*/stack' -C ~/.local/bin
+    else
+      travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+    fi
+
+    # Use the more reliable S3 mirror of Hackage
+    mkdir -p $HOME/.cabal
+    echo 'remote-repo: hackage.haskell.org:http://hackage.fpcomplete.com/' > $HOME/.cabal/config
+    echo 'remote-repo-cache: $HOME/.cabal/packages' >> $HOME/.cabal/config
+
+    if [ "$CABALVER" != "1.16" ]
+    then
+      echo 'jobs: $ncpus' >> $HOME/.cabal/config
+    fi
+  - PACKAGES=$(stack --install-ghc query locals | grep '^ *path' | sed 's@^ *path:@@')
+
+install:
+  - echo "$(ghc --version) [$(ghc --print-project-git-commit-id 2> /dev/null || echo '?')]"
+  - if [ -f configure.ac ]; then autoreconf -i; fi
+  - |
+    set -ex
+    case "$BUILD" in
+      stack)
+        stack --no-terminal --install-ghc $ARGS test --bench --only-dependencies
+        ;;
+      cabal)
+        cabal --version
+        travis_retry cabal update
+        cabal install --only-dependencies --enable-tests --enable-benchmarks --force-reinstalls --ghc-options=-O0 --reorder-goals --max-backjumps=-1 $CABALARGS $PACKAGES
+        ;;
+    esac
+    set +ex
+
+script:
+  - |
+    set -ex
+    case "$BUILD" in
+      stack)
+        stack --no-terminal $ARGS test --bench --no-run-benchmarks --haddock --no-haddock-deps
+        ;;
+      cabal)
+        cabal install --enable-tests --enable-benchmarks --force-reinstalls --ghc-options=-O0 --reorder-goals --max-backjumps=-1 $CABALARGS $PACKAGES
+
+        ORIGDIR=$(pwd)
+        for dir in $PACKAGES
+        do
+          cd $dir
+          cabal check || [ "$CABALVER" == "1.16" ]
+          cabal sdist
+          PKGVER=$(cabal info . | awk '{print $2;exit}')
+          SRC_TGZ=$PKGVER.tar.gz
+          cd dist
+          tar zxfv "$SRC_TGZ"
+          cd "$PKGVER"
+          cabal configure --enable-tests
+          cabal build
+          cd $ORIGDIR
+        done
+        ;;
+    esac
+    set +ex
